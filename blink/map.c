@@ -41,6 +41,11 @@ static long GetSystemPageSize(void) {
   // "pages" in Emscripten only refer to the granularity the memory
   // buffer can be grown at but does not affect functions like mmap
   return 4096;
+#elif defined(__COSMOCC__)
+  // cosmopolitan libc reports 65536 for sysconf(_SC_PAGESIZE) to match
+  // Windows allocation granularity, but blink needs the real host page
+  // size for mprotect on individually mapped pages (MUG pages)
+  return 4096;
 #else
   long z;
 #ifdef _SC_GRANSIZE
