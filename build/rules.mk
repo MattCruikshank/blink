@@ -15,7 +15,7 @@ o/$(MODE)/%.o: %.c
 
 o/$(MODE)/%.h.ok: %.h
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(TARGET_ARCH) -c -x c -g0 -o $@ $<
+	@touch $@
 
 o/$(MODE)/%.a:
 	rm -f $@

@@ -1112,3 +1112,21 @@ Some might view this behavior as a feature, but it diverges from
 classic system behavior; a mechanism for handling shared process
 state is being considered in
 [#92](https://github.com/jart/blink/issues/92).
+
+## Cosmopolitan (fatcosmocc) Build Changes
+
+Built with:
+
+```sh
+CC=fatcosmocc AR=fatcosmoar ./configure
+make -j$(nproc)
+```
+  This fork includes the following changes to build with `fatcosmocc`:
+
+  1. **`blink/machine.h`** — Changed `#ifdef __COSMOPOLITAN__` to `#if defined(__COSMOPOLITAN__) && !defined(__COSMOCC__)` to skip
+  internal `libc/dce.h` include
+  2. **`blink/loader.c`** — Changed `#ifndef __COSMOPOLITAN__` to `#if !defined(__COSMOPOLITAN__) || defined(__COSMOCC__)` for the
+  `IsWindows()` fallback
+  3. **`blink/cpuid.c`** — Same pattern for the OS detection macro using internal Cosmo APIs
+  4. **`build/rules.mk`** — Disabled `.h.ok` header check targets (incompatible with `fatcosmocc`'s `-x c` handling)
+  5. **`blink/clear_cache.c`** — New file providing `__clear_cache` for aarch64, which Cosmopolitan's libc doesn't supply

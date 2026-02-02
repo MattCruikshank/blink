@@ -50,7 +50,7 @@
 #define READ64(p) Read64((const u8 *)(p))
 #define READ32(p) Read32((const u8 *)(p))
 
-#ifndef __COSMOPOLITAN__
+#if !defined(__COSMOPOLITAN__) || defined(__COSMOCC__)
 #define IsWindows() 0
 #endif
 

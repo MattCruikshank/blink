@@ -5,7 +5,7 @@
 #include <signal.h>
 #include <stdbool.h>
 
-#ifdef __COSMOPOLITAN__
+#if defined(__COSMOPOLITAN__) && !defined(__COSMOCC__)
 #define _COSMO_SOURCE
 #include <libc/dce.h>
 #endif

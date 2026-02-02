@@ -32,7 +32,7 @@
 #define HAIKU_   "Haiku\0\0\0\0\0\0\0"
 #define UNKNOWN_ "Unknown\0\0\0\0\0\0"
 
-#ifdef __COSMOPOLITAN__
+#if defined(__COSMOPOLITAN__) && !defined(__COSMOCC__)
 #define OS                  \
   (IsLinux()     ? LINUX_   \
    : IsFreebsd() ? FREEBSD_ \
