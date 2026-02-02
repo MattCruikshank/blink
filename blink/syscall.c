@@ -136,6 +136,12 @@
 char *g_blink_path;
 bool FLAG_statistics;
 
+/* Portator: optional hook for custom syscalls.
+   Returns true if handled (ax set), false to fall through to default. */
+i64 (*OnPortatorSyscall)(struct Machine *, u64 ax, u64 di, u64 si, u64 dx,
+                         u64 r0, u64 r8, u64 r9);
+
+
 // delegate to work around function pointer errors, b/c
 // old musl toolchains using `int ioctl(int, int, ...)`
 static int SystemIoctl(int fd, unsigned long request, ...) {
@@ -5487,6 +5493,11 @@ void OpSyscall(P) {
   r0 = Get64(m->r10);
   r8 = Get64(m->r8);
   r9 = Get64(m->r9);
+  /* Portator: dispatch custom syscalls before the standard switch */
+  if (OnPortatorSyscall && (ax & 0xf000) == 0x7000) {
+    ax = OnPortatorSyscall(m, ax, di, si, dx, r0, r8, r9);
+    goto PortatorDone;
+  }
   switch (ax & 0xfff) {
     SYSCALL(3, 0x000, "read", SysRead, STRACE_READ);
     SYSCALL(3, 0x001, "write", SysWrite, STRACE_WRITE);
@@ -5723,6 +5734,7 @@ void OpSyscall(P) {
       ax = enosys();
       break;
   }
+PortatorDone:
   if (!m->interrupted) {
     Put64(m->ax, ax != -1 ? ax : -(XlatErrno(errno) & 0xfff));
   }
