@@ -36,6 +36,7 @@
 #include "blink/macros.h"
 #include "blink/procfs.h"
 #include "blink/thread.h"
+#include "blink/zipfs.h"
 #include "blink/tunables.h"
 
 #ifndef DISABLE_VFS
@@ -104,6 +105,7 @@ int VfsInit(const char *prefix) {
   unassert(!VfsRegister(&g_hostfs));
   unassert(!VfsRegister(&g_devfs));
   unassert(!VfsRegister(&g_procfs));
+  unassert(!VfsRegister(&g_zipfs));
 
   dll_init(&g_rootdevice.elem);
   dll_make_first(&g_vfs.devices, &g_rootdevice.elem);
@@ -487,7 +489,12 @@ static int VfsTraverseMount(struct VfsInfo **info,
       }
     } else {
       // Checking child node "childname" of info.
-      VFS_LOGF("VfsTraverseMount: checking mount %s", mount->root->name);
+      VFS_LOGF("VfsTraverseMount: checking mount %s (parent=%p, parent->ino=%llu, info->ino=%llu, childname=%s)",
+               mount->root->name,
+               (void*)mount->root->parent,
+               mount->root->parent ? (unsigned long long)mount->root->parent->ino : 0ULL,
+               (unsigned long long)(*info)->ino,
+               childname ? childname : "(null)");
       if (mount->root->parent && mount->root->parent->ino == (*info)->ino &&
           !strcmp(mount->root->name, childname)) {
         unassert(mount->root->parent->dev == (*info)->dev);
@@ -1125,6 +1132,10 @@ int VfsOpen(int dirfd, const char *name, int flags, int mode) {
     ret = VfsHandleDirfdSymlink(&dir, newname);
   }
   unassert(!VfsTraverseMount(&dir, newname));
+  VFS_LOGF("VfsOpen: after traverse, dir->device->ops=%p, Open=%p, newname=%s",
+           (void*)dir->device->ops,
+           dir->device->ops ? (void*)dir->device->ops->Open : NULL,
+           newname);
   if (ret != -1) {
     if (dir->device->ops->Open) {
       if (dir->device->ops->Open(dir, newname, flags, mode, &out) == -1) {
@@ -1133,6 +1144,7 @@ int VfsOpen(int dirfd, const char *name, int flags, int mode) {
         ret = VfsAddFd(out);
       }
     } else {
+      VFS_LOGF("VfsOpen: no Open op, returning EPERM");
       ret = eperm();
     }
   }
