@@ -131,8 +131,12 @@ static void Log(const char *file, int line, const char *fmt, va_list va,
   int err, n = 0;
   err = errno;
   unassert(!pthread_once_(&g_log.once, OpenLog));
-  APPEND(snprintf, "%c%s:%s:%d:%d ", "EI"[level], GetTimestamp(), file, line,
-         g_machine ? g_machine->tid : 0);
+  // I:blink/loader.c:724:589302
+  // APPEND(snprintf, "%c%s:%s:%d:%d ", "EI"[level], GetTimestamp(), file, line,
+  //        g_machine ? g_machine->tid : 0);
+  // APPEND(snprintf, "%c:%s:%d:%d ", "EI"[level], file, line,
+  //        g_machine ? g_machine->tid : 0);
+  APPEND(snprintf, "%c:%s:%d ", "EI"[level], file, line);
   APPEND(vsnprintf, fmt, va);
   APPEND(snprintf, "\n");
   if (n > PIPE_BUF - 1) {

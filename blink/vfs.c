@@ -126,8 +126,10 @@ int VfsInit(const char *prefix) {
     }
   }
   if (bprefix) {
+    LogInfo(__FILE__, __LINE__, "VfsInit: mounting prefix '%s' as VFS root", bprefix);
     unassert(!VfsMount(bprefix, "/", "hostfs", 0, NULL));
   } else {
+    LogInfo(__FILE__, __LINE__, "VfsInit: mounting host '/' as VFS root (no prefix)");
     unassert(!VfsMount("/", "/", "hostfs", 0, NULL));
   }
   unassert(!VfsFreeInfo(g_rootinfo));
@@ -146,16 +148,16 @@ int VfsInit(const char *prefix) {
   unassert(!VfsTraverse("/", &g_actualrootinfo, false));
 
   // devfs, procfs
-  if (VfsMkdir(AT_FDCWD, "/dev", 0755) == -1 && errno != EEXIST) {
-    ERRF("Failed to create /dev, %s", strerror(errno));
-    goto cleananddie;
-  }
-  unassert(!VfsMount("", "/dev", "devfs", 0, NULL));
-  if (VfsMkdir(AT_FDCWD, "/proc", 0755) == -1 && errno != EEXIST) {
-    ERRF("Failed to create /proc, %s", strerror(errno));
-    goto cleananddie;
-  }
-  unassert(!VfsMount("proc", "/proc", "proc", 0, NULL));
+  // if (VfsMkdir(AT_FDCWD, "/dev", 0755) == -1 && errno != EEXIST) {
+  //   ERRF("Failed to create /dev, %s", strerror(errno));
+  //   goto cleananddie;
+  // }
+  // unassert(!VfsMount("", "/dev", "devfs", 0, NULL));
+  // if (VfsMkdir(AT_FDCWD, "/proc", 0755) == -1 && errno != EEXIST) {
+  //   ERRF("Failed to create /proc, %s", strerror(errno));
+  //   goto cleananddie;
+  // }
+  // unassert(!VfsMount("proc", "/proc", "proc", 0, NULL));
 
   // Initialize the current working directory
   unassert(getcwd(hostcwd, sizeof(hostcwd)));
@@ -181,6 +183,7 @@ int VfsInit(const char *prefix) {
     strcat(cwd, hostcwd);
   }
 
+  LogInfo(__FILE__, __LINE__, "VfsInit: setting VFS cwd to '%s' (host cwd='%s')", cwd, hostcwd);
   unassert(!VfsChdir(cwd));
   free(cwd);
   free(bprefix);
@@ -202,7 +205,7 @@ int VfsInit(const char *prefix) {
     unassert(!VfsSetFd(fd, info));
   }
 
-  VFS_LOGF("Initialized VFS");
+  LogInfo(__FILE__, __LINE__, "Initialized VFS");
 
   return 0;
 cleananddie:
@@ -216,7 +219,7 @@ int VfsRegister(struct VfsSystem *system) {
     return -1;
   }
   LOCK(&g_vfs.lock);
-  VFS_LOGF("Registering filesystem %s", system->name);
+  LogInfo(__FILE__, __LINE__, "Registering filesystem %s", system->name);
   dll_init(&system->elem);
   dll_make_last(&g_vfs.systems, &system->elem);
   UNLOCK(&g_vfs.lock);
@@ -232,31 +235,41 @@ int VfsMount(const char *source, const char *target, const char *fstype,
   struct Dll *e;
   char *newname = 0;
   i64 nextdev;
+  LogInfo(__FILE__, __LINE__, "VfsMount(source = %s, target = %s)", source, target);
   if (flags & MS_SILENT_LINUX) {
+    LogInfo(__FILE__, __LINE__, "MS_SILENT_LINUX");
     flags &= ~MS_SILENT_LINUX;
   }
   if (flags) {
     // Theoretically, we can support a lot of the Linux flags without
     // changing the current design. However, as the major intended
     // usecase is to simply mount hostfs, this is currently not supported.
-    LOGF("Unsupported mount flags: 0x%llx", (unsigned long long)flags);
+    LogInfo(__FILE__, __LINE__, "Unsupported mount flags: 0x%llx", (unsigned long long)flags);
   }
+  LogInfo(__FILE__, __LINE__, "VfsTraverse...");
   if (VfsTraverse(target, &targetinfo, true) == -1) {
+    LogInfo(__FILE__, __LINE__, "VfsTraverse failed");
     return -1;
   }
+  LogInfo(__FILE__, __LINE__, "ISDIR");
   if (!S_ISDIR(targetinfo->mode)) {
+    LogInfo(__FILE__, __LINE__, "ISDIR FAILED");
     return enotdir();
   }
+  LogInfo(__FILE__, __LINE__, "/");
   // Allow mounting once to "/" during initialization only.
   if ((targetinfo->dev != g_initialrootinfo.dev ||
        targetinfo->ino != g_initialrootinfo.ino) &&
       (targetinfo->dev == g_actualrootinfo->dev &&
        targetinfo->ino == g_actualrootinfo->ino)) {
+    LogInfo(__FILE__, __LINE__, "/ failed");
     errno = EBUSY;
     return -1;
   }
+  LogInfo(__FILE__, __LINE__, "LOCK");
   LOCK(&g_vfs.lock);
   newsystem = NULL;
+  LogInfo(__FILE__, __LINE__, "LOOP");
   for (e = dll_first(g_vfs.systems); e; e = dll_next(g_vfs.systems, e)) {
     s = VFS_SYSTEM_CONTAINER(e);
     if (strcmp(s->name, fstype) == 0) {
@@ -264,11 +277,13 @@ int VfsMount(const char *source, const char *target, const char *fstype,
       break;
     }
   }
+  LogInfo(__FILE__, __LINE__, "newsystem?");
   if (newsystem == NULL) {
-    VFS_LOGF("Unknown filesystem type: %s", fstype);
+    LogInfo(__FILE__, __LINE__, "Unknown filesystem type: %s", fstype);
     UNLOCK(&g_vfs.lock);
     return enodev();
   }
+  LogInfo(__FILE__, __LINE__, "loop");
   for (e = dll_first(g_vfs.devices); e; e = dll_next(g_vfs.devices, e)) {
     d = VFS_DEVICE_CONTAINER(e);
     if (d->dev == targetinfo->dev) {
@@ -276,23 +291,31 @@ int VfsMount(const char *source, const char *target, const char *fstype,
       break;
     }
   }
+  LogInfo(__FILE__, __LINE__, "targetdevice?");
   if (targetdevice == NULL) {
+    LogInfo(__FILE__, __LINE__, "targetdevice failed");
     // Might have been unmounted after VfsTraverse by another thread
     UNLOCK(&g_vfs.lock);
     return enoent();
   }
+  LogInfo(__FILE__, __LINE__, "name?");
   if (targetinfo->name != NULL) {
+    LogInfo(__FILE__, __LINE__, "targetinfo->name == null");
     newname = strdup(targetinfo->name);
     if (newname == NULL) {
+      LogInfo(__FILE__, __LINE__, "newname == null");
       UNLOCK(&g_vfs.lock);
       return enomem();
     }
   }
+  LogInfo(__FILE__, __LINE__, "Init?");
   if (newsystem->ops.Init(source, flags, data, &newdevice, &newmount) == -1) {
+    LogInfo(__FILE__, __LINE__, "Init failed");
     UNLOCK(&g_vfs.lock);
     return -1;
   }
   nextdev = 0;
+  LogInfo(__FILE__, __LINE__, "loop");
   for (e = dll_first(g_vfs.devices); e; e = dll_next(g_vfs.devices, e)) {
     d = VFS_DEVICE_CONTAINER(e);
     if (d->dev == nextdev) {
@@ -303,8 +326,10 @@ int VfsMount(const char *source, const char *target, const char *fstype,
   }
   newdevice->dev = nextdev;
   if (e == NULL) {
+    LogInfo(__FILE__, __LINE__, "dll_make_last");
     dll_make_last(&g_vfs.devices, &newdevice->elem);
   } else {
+    LogInfo(__FILE__, __LINE__, "dll_splice_after");
     dll_splice_after(dll_prev(g_vfs.devices, e), &newdevice->elem);
   }
   newdevice->flags = flags;
@@ -312,12 +337,17 @@ int VfsMount(const char *source, const char *target, const char *fstype,
   newmount->root->dev = nextdev;
   newmount->root->name = newname;
   newmount->root->namelen = targetinfo->namelen;
+  LogInfo(__FILE__, __LINE__, "VfsAcquireInfo?");
   unassert(!VfsAcquireInfo(targetinfo->parent, &newmount->root->parent));
+  LogInfo(__FILE__, __LINE__, "dll_init");
   dll_init(&newmount->elem);
+  LogInfo(__FILE__, __LINE__, "dll_make_last");
   dll_make_last(&targetdevice->mounts, &newmount->elem);
+  LogInfo(__FILE__, __LINE__, "unlock");
   UNLOCK(&g_vfs.lock);
+  LogInfo(__FILE__, __LINE__, "assert");
   unassert(!VfsFreeInfo(targetinfo));
-  VFS_LOGF("Mounted a new device at %s, dev=%ld", target, nextdev);
+  LogInfo(__FILE__, __LINE__, "Mounted a new device at %s, dev=%ld", target, nextdev);
   return 0;
 }
 
@@ -419,15 +449,17 @@ int VfsCreateInfo(struct VfsInfo **output) {
 int VfsAcquireInfo(struct VfsInfo *info, struct VfsInfo **output) {
   int rc;
   if (output == NULL) {
+    LogInfo(__FILE__, __LINE__, "VfsAcquireInfo output == null - oh no");
     return efault();
   }
   if (info == NULL) {
     *output = NULL;
+    LogInfo(__FILE__, __LINE__, "VfsAcquireInfo info == null - oh no");
     return 0;
   }
   rc = atomic_fetch_add(&info->refcount, 1);
   unassert(rc > 0);
-  VFS_LOGF("Acquired VfsInfo %p, refcount now %i.", info, rc + 1);
+  //LogInfo(__FILE__, __LINE__, "Acquired VfsInfo %p, refcount now %i.", info, rc + 1);
   *output = info;
   return 0;
 }
@@ -438,7 +470,7 @@ int VfsFreeInfo(struct VfsInfo *info) {
     return 0;
   }
   if ((rc = atomic_fetch_sub(&info->refcount, 1)) != 1) {
-    VFS_LOGF("Freeing VfsInfo %p, refcount now %i.", info, rc - 1);
+    //LogInfo(__FILE__, __LINE__, "Freeing VfsInfo %p, refcount now %i.", info, rc - 1);
     return 0;
   }
   if (VfsFreeInfo(info->parent) == -1) {
@@ -479,7 +511,7 @@ static int VfsTraverseMount(struct VfsInfo **info,
     if (!childname) {
       // Checking info itself.
       if (mount->baseino == (*info)->ino) {
-        VFS_LOGF("VfsTraverseMount: switching from dev=%d to dev=%d",
+        LogInfo(__FILE__, __LINE__, "VfsTraverseMount: switching from dev=%d to dev=%d",
                  (*info)->dev, mount->root->dev);
         unassert(!VfsFreeInfo(*info));
         unassert(!VfsAcquireInfo(mount->root, info));
@@ -487,11 +519,11 @@ static int VfsTraverseMount(struct VfsInfo **info,
       }
     } else {
       // Checking child node "childname" of info.
-      VFS_LOGF("VfsTraverseMount: checking mount %s", mount->root->name);
+      LogInfo(__FILE__, __LINE__, "VfsTraverseMount: checking mount %s", mount->root->name);
       if (mount->root->parent && mount->root->parent->ino == (*info)->ino &&
           !strcmp(mount->root->name, childname)) {
         unassert(mount->root->parent->dev == (*info)->dev);
-        VFS_LOGF("VfsTraverseMount: switching from dev=%d to dev=%d",
+        LogInfo(__FILE__, __LINE__, "VfsTraverseMount: switching from dev=%d to dev=%d",
                  (*info)->dev, mount->root->dev);
         strcpy(childname, ".");
         unassert(!VfsFreeInfo(*info));
@@ -510,29 +542,50 @@ static int VfsTraverseStackBuild(struct VfsInfo **stack, const char *path,
   const char *end;
   char filename[VFS_NAME_MAX];
   char *link;
-  VFS_LOGF("VfsTraverseStackBuild(%p, \"%s\", %p, %d)", stack, path, root,
+  LogInfo(__FILE__, __LINE__, "VfsTraverseStackBuild(%p, \"%s\", %p, %d)", stack, path, root,
            follow);
+  LogInfo(__FILE__, __LINE__, "VfsTraverseStackBuild: traversing '%s' (level=%d)", path, level);
   if (stack == NULL || path == NULL) {
+    LogInfo(__FILE__, __LINE__, "stack or path null");
     return efault();
   }
   if (level > VFS_TRAVERSE_MAX_LINKS) {
+    LogInfo(__FILE__, __LINE__, "level too big");
     return eloop();
   }
   origin = *stack;
   if (*stack == NULL) {
+    LogInfo(__FILE__, __LINE__, "unassert");
     unassert(!VfsAcquireInfo(&g_initialrootinfo, stack));
   }
   if (root == NULL) {
+    LogInfo(__FILE__, __LINE__, "root was null");
     root = &g_initialrootinfo;
   }
+  LogInfo(__FILE__, __LINE__, "looping");
   while (*path) {
+    LogInfo(__FILE__, __LINE__, "is it a dir");
     if (!S_ISDIR((*stack)->mode)) {
+      LogInfo(__FILE__, __LINE__, "nope");
       enotdir();
       goto cleananddie;
     }
+    LogInfo(__FILE__, __LINE__, "unassert");
     unassert(!VfsTraverseMount(stack, NULL));
+
+    if ((*stack)->device->ops)
+    {
+      LogInfo(__FILE__, __LINE__, "first");
+      if ((*stack)->device->ops->Traverse)
+      {
+        LogInfo(__FILE__, __LINE__, "second");
+      }
+      //LogInfo(__FILE__, __LINE__, "name? %s", ((*stack)->device->name)); // nope, not there
+    }
+
     if ((*stack)->device->ops && (*stack)->device->ops->Traverse) {
       if ((*stack)->device->ops->Traverse(stack, &path, root) == -1) {
+        LogInfo(__FILE__, __LINE__, "traverse nope");
         goto cleananddie;
       }
     } else {
@@ -547,6 +600,7 @@ static int VfsTraverseStackBuild(struct VfsInfo **stack, const char *path,
         break;
       }
       if (end - path >= VFS_NAME_MAX) {
+        LogInfo(__FILE__, __LINE__, "too long");
         enametoolong();
         goto cleananddie;
       }
@@ -558,33 +612,43 @@ static int VfsTraverseStackBuild(struct VfsInfo **stack, const char *path,
       }
       if (!strcmp(filename, "..")) {
         if (*stack != root && (*stack)->parent != NULL) {
+          LogInfo(__FILE__, __LINE__, "unassert");
           unassert(!VfsAcquireInfo((*stack)->parent, &next));
           unassert(!VfsFreeInfo(*stack));
           *stack = next;
         }
         continue;
       }
+      LogInfo(__FILE__, __LINE__, "VfsTraverseStackBuild: looking up '%s' in '%s' (dev=%ld)",
+              filename, (*stack)->name, (long)(*stack)->device->dev);
       if ((*stack)->device->ops->Finddir(*stack, filename, &next) == -1) {
+        LogInfo(__FILE__, __LINE__, "VfsTraverseStackBuild: Finddir failed for '%s' (errno=%d)", filename, errno);
         goto cleananddie;
       }
+      LogInfo(__FILE__, __LINE__, "VfsTraverseStackBuild: found '%s'", filename);
       unassert(!VfsFreeInfo(*stack));
       *stack = next;
     }
     if (follow) {
       while (S_ISLNK((*stack)->mode)) {
         if ((*stack)->device->ops->Readlink(*stack, &link) == -1) {
+          LogInfo(__FILE__, __LINE__, "die");
           goto cleananddie;
         }
-        VFS_LOGF("VfsTraverseStackBuild: symlink to %s", link);
+        LogInfo(__FILE__, __LINE__, "VfsTraverseStackBuild: symlink to %s", link);
         if (link[0] == '/') {
+          LogInfo(__FILE__, __LINE__, "unassert");
           unassert(!VfsFreeInfo(*stack));
           unassert(!VfsAcquireInfo(root, stack));
         } else {
+          LogInfo(__FILE__, __LINE__, "unassert");
           unassert(!VfsAcquireInfo((*stack)->parent, &next));
           unassert(!VfsFreeInfo(*stack));
           *stack = next;
         }
+        LogInfo(__FILE__, __LINE__, "VfsTraverseStackBuild");
         if (VfsTraverseStackBuild(stack, link, root, follow, level + 1) == -1) {
+          LogInfo(__FILE__, __LINE__, "failed");
           free(link);
           goto cleananddie;
         }
@@ -592,6 +656,7 @@ static int VfsTraverseStackBuild(struct VfsInfo **stack, const char *path,
       }
     }
   }
+  LogInfo(__FILE__, __LINE__, "unassert");
   unassert(!VfsTraverseMount(stack, NULL));
   return 0;
 cleananddie:
@@ -605,21 +670,33 @@ cleananddie:
 
 int VfsTraverse(const char *path, struct VfsInfo **output, bool follow) {
   struct VfsInfo *root;
-  VFS_LOGF("VfsTraverse(\"%s\", %p, %d)", path, output, follow);
+  LogInfo(__FILE__, __LINE__, "VfsTraverse(\"%s\", %p, %d)", path, output, follow);
   if (path == NULL || output == NULL) {
+    if (path == NULL) {
+      LogInfo(__FILE__, __LINE__, "path is null");
+    }
+    if (output == NULL) {
+      LogInfo(__FILE__, __LINE__, "output is null");
+    }
     efault();
     return -1;
   }
   root = NULL;
+  LogInfo(__FILE__, __LINE__, "checking");
   if (path[0] != '/') {
+    LogInfo(__FILE__, __LINE__, "unassert");
     unassert(!VfsAcquireInfo(g_cwdinfo, output));
   } else {
+    LogInfo(__FILE__, __LINE__, "another unassert");
     unassert(!VfsAcquireInfo(g_rootinfo, output));
   }
+  LogInfo(__FILE__, __LINE__, "VfsTraverseStackBuild...");
   if (VfsTraverseStackBuild(output, path, root, follow, 0) == -1) {
+    LogInfo(__FILE__, __LINE__, "failed");
     unassert(!VfsFreeInfo(*output));
     return -1;
   }
+  LogInfo(__FILE__, __LINE__, "worked");
   return 0;
 }
 
@@ -675,34 +752,42 @@ ssize_t VfsPathBuild(struct VfsInfo *info, struct VfsInfo *root, bool absolute,
   size_t len, currentlen;
   len = 0;
   current = info;
-  VFS_LOGF("VfsPathBuild(%p, %p, %d, %p)", info, root, absolute, output);
+  LogInfo(__FILE__, __LINE__, "VfsPathBuild(%p, %p, %d, %p)", info, root, absolute, output);
   if (root == NULL) {
+    LogInfo(__FILE__, __LINE__, "root == null");
     root = g_rootinfo;
   }
   if (current->dev == root->dev && current->ino == root->ino) {
+    LogInfo(__FILE__, __LINE__, "test");
     if (absolute) {
+      LogInfo(__FILE__, __LINE__, "absolute");
       memcpy(output, "/", 2);
       return 1;
     } else {
+      LogInfo(__FILE__, __LINE__, "0");
       output[0] = '\0';
       return 0;
     }
   }
+  LogInfo(__FILE__, __LINE__, "while");
   while (current && (current->dev != root->dev || current->ino != root->ino)) {
     len += current->namelen + 1;
     current = current->parent;
   }
   if (current == NULL) {
+    LogInfo(__FILE__, __LINE__, "current == null");
     memcpy(output, VFS_UNREACHABLE, sizeof(VFS_UNREACHABLE));
     return sizeof(VFS_UNREACHABLE) - 1;
   }
   len -= !absolute;
   if (len >= PATH_MAX) {
+    LogInfo(__FILE__, __LINE__, "name too long");
     return enametoolong();
   }
   current = info;
   currentlen = len;
   output[currentlen] = '\0';
+  LogInfo(__FILE__, __LINE__, "while");
   while (current && (current->dev != root->dev || current->ino != root->ino)) {
     currentlen -= current->namelen;
     memcpy(output + currentlen, current->name, current->namelen);
@@ -712,6 +797,7 @@ ssize_t VfsPathBuild(struct VfsInfo *info, struct VfsInfo *root, bool absolute,
     }
     current = current->parent;
   }
+  LogInfo(__FILE__, __LINE__, "return len");
   return len;
 }
 
@@ -769,7 +855,7 @@ int VfsFreeFd(int fd, struct VfsInfo **data) {
       *data = vfsfd->data;
       dll_remove(&g_vfs.fds, &vfsfd->elem);
       free(vfsfd);
-      VFS_LOGF("VfsFreeFd(%d)", fd);
+      LogInfo(__FILE__, __LINE__, "VfsFreeFd(%d)", fd);
       UNLOCK(&g_vfs.lock);
       return 0;
     }
@@ -831,7 +917,7 @@ int VfsSetFd(int fd, struct VfsInfo *data) {
 int VfsChdir(const char *path) {
   struct VfsInfo *info, *tmp;
   int ret = 0;
-  VFS_LOGF("VfsChdir(\"%s\")", path);
+  LogInfo(__FILE__, __LINE__, "VfsChdir(\"%s\")", path);
   if (path == NULL) {
     return efault();
   }
@@ -855,7 +941,7 @@ int VfsChdir(const char *path) {
 int VfsFchdir(int fd) {
   struct VfsInfo *info, *tmp;
   int ret = 0;
-  VFS_LOGF("VfsFchdir(%d)", fd);
+  LogInfo(__FILE__, __LINE__, "VfsFchdir(%d)", fd);
   if (VfsGetFd(fd, &info) != 0) {
     return -1;
   }
@@ -873,7 +959,7 @@ int VfsFchdir(int fd) {
 int VfsChroot(const char *path) {
   struct VfsInfo *info, *tmp;
   int ret = 0;
-  VFS_LOGF("VfsChroot(\"%s\")", path);
+  LogInfo(__FILE__, __LINE__, "VfsChroot(\"%s\")", path);
   if (path == NULL) {
     return efault();
   }
@@ -917,12 +1003,17 @@ static int VfsHandleDirfdName(int dirfd, const char *name,
   struct VfsInfo *dir = NULL, *tmp = NULL;
   const char *p, *q;
   char *parentname = NULL;
+  LogInfo(__FILE__, __LINE__, "VfsHandleDirfdName");
   if (name[0] == '/') {
+    LogInfo(__FILE__, __LINE__, "VfsAcquireInfo == /");
     unassert(!VfsAcquireInfo(g_rootinfo, &dir));
   } else if (dirfd == AT_FDCWD) {
+    LogInfo(__FILE__, __LINE__, "VfsAcquireInfo AT_FDCWD");
     unassert(!VfsAcquireInfo(g_cwdinfo, &dir));
   } else {
+    LogInfo(__FILE__, __LINE__, "VfsGetFd");
     if (VfsGetFd(dirfd, &dir) == -1) {
+      LogInfo(__FILE__, __LINE__, "VfsGetFd failed");
       goto cleananddie;
     }
   }
@@ -931,7 +1022,9 @@ static int VfsHandleDirfdName(int dirfd, const char *name,
     *parent = dir;
     return 0;
   }
+  LogInfo(__FILE__, __LINE__, "Checking isdir");
   if (!S_ISDIR(dir->mode)) {
+    LogInfo(__FILE__, __LINE__, "not isdir");
     enotdir();
     goto cleananddie;
   }
@@ -948,15 +1041,19 @@ static int VfsHandleDirfdName(int dirfd, const char *name,
   if (parentname == NULL) {
     goto cleananddie;
   }
+  LogInfo(__FILE__, __LINE__, "VfsTraverseStackBuild");
   if (VfsTraverseStackBuild(&dir, parentname, g_rootinfo, true, 0) == -1) {
+    LogInfo(__FILE__, __LINE__, "VfsTraverseStackBuild failed");
     goto cleananddie;
   }
   if (!strcmp(q, "..") && dir->parent) {
+    LogInfo(__FILE__, __LINE__, "VfsAcquireInfo ..");
     unassert(!VfsAcquireInfo(dir->parent, &tmp));
     unassert(!VfsFreeInfo(dir));
     dir = tmp;
     memcpy(leaf, ".", 2);
   } else {
+    LogInfo(__FILE__, __LINE__, "memcpy");
     memcpy(leaf, q, p - q + 1);
   }
   *parent = dir;
@@ -974,7 +1071,7 @@ static int VfsHandleDirfdSymlink(struct VfsInfo **dir,
   char *buf, *s;
   struct VfsInfo *tmp;
   ssize_t linklen;
-  VFS_LOGF("VfsHandleDirfdSymlink(%p, %p)", dir, name);
+  LogInfo(__FILE__, __LINE__, "VfsHandleDirfdSymlink(%p, %p)", dir, name);
   buf = NULL;
   tmp = NULL;
   while (true) {
@@ -1039,7 +1136,7 @@ int VfsUnlink(int dirfd, const char *name, int flags) {
   struct VfsInfo *dir;
   char newname[VFS_NAME_MAX];
   int ret;
-  VFS_LOGF("VfsUnlink(%d, \"%s\", %d)", dirfd, name, flags);
+  LogInfo(__FILE__, __LINE__, "VfsUnlink(%d, \"%s\", %d)", dirfd, name, flags);
   if (name == NULL) {
     return efault();
   }
@@ -1063,23 +1160,31 @@ int VfsMkdir(int dirfd, const char *name, mode_t mode) {
   struct VfsInfo *dir;
   char newname[VFS_NAME_MAX];
   int ret;
-  VFS_LOGF("VfsMkdir(%d, \"%s\", %d)", dirfd, name, mode);
+  LogInfo(__FILE__, __LINE__, "VfsMkdir(%d, \"%s\", %d)", dirfd, name, mode);
   if (name == NULL) {
+    LogInfo(__FILE__, __LINE__, "  name was NULL");
     return efault();
   }
   if (!*name) {
+    LogInfo(__FILE__, __LINE__, "  name points to nothing");
     return enoent();
   }
   if (VfsHandleDirfdName(dirfd, name, &dir, newname) == -1) {
+    LogInfo(__FILE__, __LINE__, "  VfsHandleDirfdName is -1");
     return -1;
   }
   unassert(!VfsTraverseMount(&dir, newname));
+  LogInfo(__FILE__, __LINE__, "  VfsTraverseMount worked?");
   if (dir->device->ops->Mkdir) {
+    LogInfo(__FILE__, __LINE__, "  Trying Mkdir");
     ret = dir->device->ops->Mkdir(dir, newname, mode);
   } else {
+    LogInfo(__FILE__, __LINE__, "  eperm");
     ret = eperm();
   }
+  LogInfo(__FILE__, __LINE__, "  checking VfsFreeInfo");
   unassert(!VfsFreeInfo(dir));
+  LogInfo(__FILE__, __LINE__, "  done");
   return ret;
 }
 
@@ -1087,7 +1192,7 @@ int VfsMkfifo(int dirfd, const char *name, mode_t mode) {
   struct VfsInfo *dir;
   char newname[VFS_NAME_MAX];
   int ret;
-  VFS_LOGF("VfsMkfifo(%d, \"%s\", %d)", dirfd, name, mode);
+  LogInfo(__FILE__, __LINE__, "VfsMkfifo(%d, \"%s\", %d)", dirfd, name, mode);
   if (name == NULL) {
     return efault();
   }
@@ -1111,7 +1216,8 @@ int VfsOpen(int dirfd, const char *name, int flags, int mode) {
   struct VfsInfo *dir, *out;
   char newname[VFS_NAME_MAX];
   int ret = 0;
-  VFS_LOGF("VfsOpen(%d, \"%s\", %d, %d)", dirfd, name, flags, mode);
+  LogInfo(__FILE__, __LINE__, "VfsOpen(%d, \"%s\", %d, %d)", dirfd, name, flags, mode);
+  LogInfo(__FILE__, __LINE__, "VfsOpen: opening '%s' (dirfd=%d, flags=%d)", name, dirfd, flags);
   if (name == NULL) {
     return efault();
   }
@@ -1119,8 +1225,10 @@ int VfsOpen(int dirfd, const char *name, int flags, int mode) {
     return enoent();
   }
   if (VfsHandleDirfdName(dirfd, name, &dir, newname) == -1) {
+    LogInfo(__FILE__, __LINE__, "VfsOpen: VfsHandleDirfdName failed for '%s' (errno=%d)", name, errno);
     return -1;
   }
+  LogInfo(__FILE__, __LINE__, "VfsOpen: resolved to dir='%s', newname='%s'", dir->name, newname);
   if (!(flags & O_NOFOLLOW)) {
     ret = VfsHandleDirfdSymlink(&dir, newname);
   }
@@ -1128,13 +1236,18 @@ int VfsOpen(int dirfd, const char *name, int flags, int mode) {
   if (ret != -1) {
     if (dir->device->ops->Open) {
       if (dir->device->ops->Open(dir, newname, flags, mode, &out) == -1) {
+        LogInfo(__FILE__, __LINE__, "VfsOpen: device Open failed for '%s' (errno=%d)", newname, errno);
         ret = -1;
       } else {
         ret = VfsAddFd(out);
+        LogInfo(__FILE__, __LINE__, "VfsOpen: success, fd=%d", ret);
       }
     } else {
+      LogInfo(__FILE__, __LINE__, "VfsOpen: device has no Open op");
       ret = eperm();
     }
+  } else {
+    LogInfo(__FILE__, __LINE__, "VfsOpen: symlink resolution failed (errno=%d)", errno);
   }
   unassert(!VfsFreeInfo(dir));
   return ret;
@@ -1144,7 +1257,7 @@ int VfsChmod(int dirfd, const char *name, mode_t mode, int flags) {
   struct VfsInfo *dir;
   char newname[VFS_NAME_MAX];
   int ret = 0;
-  VFS_LOGF("VfsChmod(%d, \"%s\", %d, %d)", dirfd, name, mode, flags);
+  LogInfo(__FILE__, __LINE__, "VfsChmod(%d, \"%s\", %d, %d)", dirfd, name, mode, flags);
   if (name == NULL) {
     return efault();
   }
@@ -1172,7 +1285,7 @@ int VfsChmod(int dirfd, const char *name, mode_t mode, int flags) {
 int VfsFchmod(int fd, mode_t mode) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsFchmod(%d, %d)", fd, mode);
+  LogInfo(__FILE__, __LINE__, "VfsFchmod(%d, %d)", fd, mode);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1189,7 +1302,7 @@ int VfsAccess(int dirfd, const char *name, mode_t mode, int flags) {
   struct VfsInfo *dir;
   char newname[VFS_NAME_MAX];
   int ret = 0;
-  VFS_LOGF("VfsAccess(%d, \"%s\", %d, %d)", dirfd, name, mode, flags);
+  LogInfo(__FILE__, __LINE__, "VfsAccess(%d, \"%s\", %d, %d)", dirfd, name, mode, flags);
   if (name == NULL) {
     return efault();
   }
@@ -1218,7 +1331,7 @@ int VfsSymlink(const char *target, int dirfd, const char *name) {
   struct VfsInfo *dir;
   char newname[VFS_NAME_MAX];
   int ret;
-  VFS_LOGF("VfsSymlink(\"%s\", %d, \"%s\")", target, dirfd, name);
+  LogInfo(__FILE__, __LINE__, "VfsSymlink(\"%s\", %d, \"%s\")", target, dirfd, name);
   if (target == NULL || name == NULL) {
     return efault();
   }
@@ -1242,7 +1355,7 @@ int VfsStat(int dirfd, const char *name, struct stat *st, int flags) {
   struct VfsInfo *dir;
   char newname[VFS_NAME_MAX];
   int ret = 0;
-  VFS_LOGF("VfsStat(%d, \"%s\", %p, %d)", dirfd, name, st, flags);
+  LogInfo(__FILE__, __LINE__, "VfsStat(%d, \"%s\", %p, %d)", dirfd, name, st, flags);
   if (name == NULL || st == NULL) {
     return efault();
   }
@@ -1268,7 +1381,7 @@ int VfsChown(int dirfd, const char *name, uid_t uid, gid_t gid, int flags) {
   struct VfsInfo *dir;
   char newname[VFS_NAME_MAX];
   int ret = 0;
-  VFS_LOGF("VfsChown(%d, \"%s\", %d, %d, %d)", dirfd, name, uid, gid, flags);
+  LogInfo(__FILE__, __LINE__, "VfsChown(%d, \"%s\", %d, %d, %d)", dirfd, name, uid, gid, flags);
   if (name == NULL) {
     return efault();
   }
@@ -1293,7 +1406,7 @@ int VfsChown(int dirfd, const char *name, uid_t uid, gid_t gid, int flags) {
 int VfsFchown(int fd, uid_t uid, gid_t gid) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsFchown(%d, %d, %d)", fd, uid, gid);
+  LogInfo(__FILE__, __LINE__, "VfsFchown(%d, %d, %d)", fd, uid, gid);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1311,7 +1424,7 @@ int VfsRename(int olddirfd, const char *oldname, int newdirfd,
   struct VfsInfo *olddir, *newdir;
   char newoldname[VFS_NAME_MAX], newnewname[VFS_NAME_MAX];
   int ret;
-  VFS_LOGF("VfsRename(%d, \"%s\", %d, \"%s\")", olddirfd, oldname, newdirfd,
+  LogInfo(__FILE__, __LINE__, "VfsRename(%d, \"%s\", %d, \"%s\")", olddirfd, oldname, newdirfd,
            newname);
   if (oldname == NULL || newname == NULL) {
     return efault();
@@ -1343,7 +1456,7 @@ ssize_t VfsReadlink(int dirfd, const char *name, char *buf, size_t bufsiz) {
   ssize_t ret;
   char *tmp;
   char newname[VFS_NAME_MAX];
-  VFS_LOGF("VfsReadlink(%d, \"%s\", %p, %zu)", dirfd, name, buf, bufsiz);
+  LogInfo(__FILE__, __LINE__, "VfsReadlink(%d, \"%s\", %p, %zu)", dirfd, name, buf, bufsiz);
   if (name == NULL || buf == NULL) {
     return efault();
   }
@@ -1382,7 +1495,7 @@ int VfsLink(int olddirfd, const char *oldname, int newdirfd,
   struct VfsInfo *olddir, *newdir;
   char newoldname[VFS_NAME_MAX], newnewname[VFS_NAME_MAX];
   int ret;
-  VFS_LOGF("VfsLink(%d, \"%s\", %d, \"%s\", %d)", olddirfd, oldname, newdirfd,
+  LogInfo(__FILE__, __LINE__, "VfsLink(%d, \"%s\", %d, \"%s\", %d)", olddirfd, oldname, newdirfd,
            newname, flags);
   if (oldname == NULL || newname == NULL) {
     return efault();
@@ -1424,7 +1537,7 @@ int VfsUtime(int dirfd, const char *name, const struct timespec times[2],
   struct VfsInfo *dir;
   char newname[VFS_NAME_MAX];
   int ret = -1;
-  VFS_LOGF("VfsUtime(%d, \"%s\", %p, %d)", dirfd, name, times, flags);
+  LogInfo(__FILE__, __LINE__, "VfsUtime(%d, \"%s\", %p, %d)", dirfd, name, times, flags);
   if (name == NULL) {
     return efault();
   }
@@ -1452,7 +1565,7 @@ int VfsUtime(int dirfd, const char *name, const struct timespec times[2],
 int VfsFutime(int fd, const struct timespec times[2]) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsFutime(%d, %p)", fd, times);
+  LogInfo(__FILE__, __LINE__, "VfsFutime(%d, %p)", fd, times);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1469,7 +1582,7 @@ int VfsFutime(int fd, const struct timespec times[2]) {
 int VfsFstat(int fd, struct stat *st) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsFstat(%d, %p)", fd, st);
+  LogInfo(__FILE__, __LINE__, "VfsFstat(%d, %p)", fd, st);
   if (st == NULL) {
     return efault();
   }
@@ -1489,7 +1602,7 @@ int VfsFstat(int fd, struct stat *st) {
 int VfsFtruncate(int fd, off_t length) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsFtruncate(%d, %ld)", fd, length);
+  LogInfo(__FILE__, __LINE__, "VfsFtruncate(%d, %ld)", fd, length);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1506,7 +1619,7 @@ int VfsFtruncate(int fd, off_t length) {
 int VfsClose(int fd) {
   struct VfsInfo *info;
   int ret = 0;
-  VFS_LOGF("VfsClose(%d)", fd);
+  LogInfo(__FILE__, __LINE__, "VfsClose(%d)", fd);
   if (VfsFreeFd(fd, &info) == -1) {
     return -1;
   }
@@ -1522,7 +1635,7 @@ int VfsClose(int fd) {
 ssize_t VfsRead(int fd, void *buf, size_t nbyte) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsRead(%d, %p, %zu)", fd, buf, nbyte);
+  LogInfo(__FILE__, __LINE__, "VfsRead(%d, %p, %zu)", fd, buf, nbyte);
   if (buf == NULL) {
     return efault();
   }
@@ -1541,7 +1654,7 @@ ssize_t VfsRead(int fd, void *buf, size_t nbyte) {
 ssize_t VfsWrite(int fd, const void *buf, size_t nbyte) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsWrite(%d, %p, %zu)", fd, buf, nbyte);
+  LogInfo(__FILE__, __LINE__, "VfsWrite(%d, %p, %zu)", fd, buf, nbyte);
   if (buf == NULL) {
     return efault();
   }
@@ -1560,7 +1673,7 @@ ssize_t VfsWrite(int fd, const void *buf, size_t nbyte) {
 ssize_t VfsPread(int fd, void *buf, size_t nbyte, off_t offset) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsPread(%d, %p, %zu, %ld)", fd, buf, nbyte, offset);
+  LogInfo(__FILE__, __LINE__, "VfsPread(%d, %p, %zu, %ld)", fd, buf, nbyte, offset);
   if (buf == NULL) {
     return efault();
   }
@@ -1579,7 +1692,7 @@ ssize_t VfsPread(int fd, void *buf, size_t nbyte, off_t offset) {
 ssize_t VfsPwrite(int fd, const void *buf, size_t nbyte, off_t offset) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsPwrite(%d, %p, %zu, %ld)", fd, buf, nbyte, offset);
+  LogInfo(__FILE__, __LINE__, "VfsPwrite(%d, %p, %zu, %ld)", fd, buf, nbyte, offset);
   if (buf == NULL) {
     return efault();
   }
@@ -1598,7 +1711,7 @@ ssize_t VfsPwrite(int fd, const void *buf, size_t nbyte, off_t offset) {
 ssize_t VfsReadv(int fd, const struct iovec *iov, int iovcnt) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsReadv(%d, %p, %d)", fd, iov, iovcnt);
+  LogInfo(__FILE__, __LINE__, "VfsReadv(%d, %p, %d)", fd, iov, iovcnt);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1614,7 +1727,7 @@ ssize_t VfsReadv(int fd, const struct iovec *iov, int iovcnt) {
 ssize_t VfsWritev(int fd, const struct iovec *iov, int iovcnt) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsWritev(%d, %p, %d)", fd, iov, iovcnt);
+  LogInfo(__FILE__, __LINE__, "VfsWritev(%d, %p, %d)", fd, iov, iovcnt);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1630,7 +1743,7 @@ ssize_t VfsWritev(int fd, const struct iovec *iov, int iovcnt) {
 ssize_t VfsPreadv(int fd, const struct iovec *iov, int iovcnt, off_t offset) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsPreadv(%d, %p, %d, %ld)", fd, iov, iovcnt, offset);
+  LogInfo(__FILE__, __LINE__, "VfsPreadv(%d, %p, %d, %ld)", fd, iov, iovcnt, offset);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1646,7 +1759,7 @@ ssize_t VfsPreadv(int fd, const struct iovec *iov, int iovcnt, off_t offset) {
 ssize_t VfsPwritev(int fd, const struct iovec *iov, int iovcnt, off_t offset) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsPwritev(%d, %p, %d, %ld)", fd, iov, iovcnt, offset);
+  LogInfo(__FILE__, __LINE__, "VfsPwritev(%d, %p, %d, %ld)", fd, iov, iovcnt, offset);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1662,7 +1775,7 @@ ssize_t VfsPwritev(int fd, const struct iovec *iov, int iovcnt, off_t offset) {
 off_t VfsSeek(int fd, off_t offset, int whence) {
   struct VfsInfo *info;
   off_t ret;
-  VFS_LOGF("VfsSeek(%d, %ld, %d)", fd, offset, whence);
+  LogInfo(__FILE__, __LINE__, "VfsSeek(%d, %ld, %d)", fd, offset, whence);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1678,7 +1791,7 @@ off_t VfsSeek(int fd, off_t offset, int whence) {
 int VfsFsync(int fd) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsFsync(%d)", fd);
+  LogInfo(__FILE__, __LINE__, "VfsFsync(%d)", fd);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1694,7 +1807,7 @@ int VfsFsync(int fd) {
 int VfsFdatasync(int fd) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsFdatasync(%d)", fd);
+  LogInfo(__FILE__, __LINE__, "VfsFdatasync(%d)", fd);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1710,7 +1823,7 @@ int VfsFdatasync(int fd) {
 int VfsFlock(int fd, int operation) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsFlock(%d, %d)", fd, operation);
+  LogInfo(__FILE__, __LINE__, "VfsFlock(%d, %d)", fd, operation);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1727,7 +1840,7 @@ int VfsFcntl(int fd, int cmd, ...) {
   struct VfsInfo *info, *newinfo;
   int ret;
   va_list ap;
-  VFS_LOGF("VfsFcntl(%d, %d, ...)", fd, cmd);
+  LogInfo(__FILE__, __LINE__, "VfsFcntl(%d, %d, ...)", fd, cmd);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1761,7 +1874,7 @@ int VfsFcntl(int fd, int cmd, ...) {
 int VfsIoctl(int fd, unsigned long request, void *arg) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsIoctl(%d, %lu, %p)", fd, request, arg);
+  LogInfo(__FILE__, __LINE__, "VfsIoctl(%d, %lu, %p)", fd, request, arg);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1778,7 +1891,7 @@ int VfsIoctl(int fd, unsigned long request, void *arg) {
 int VfsDup(int fd) {
   struct VfsInfo *info, *newinfo;
   int ret;
-  VFS_LOGF("VfsDup(%d)", fd);
+  LogInfo(__FILE__, __LINE__, "VfsDup(%d)", fd);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1801,7 +1914,7 @@ int VfsDup(int fd) {
 int VfsDup2(int fd, int newfd) {
   struct VfsInfo *info, *newinfo;
   int ret;
-  VFS_LOGF("VfsDup2(%d, %d)", fd, newfd);
+  LogInfo(__FILE__, __LINE__, "VfsDup2(%d, %d)", fd, newfd);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1828,7 +1941,7 @@ int VfsDup2(int fd, int newfd) {
 int VfsDup3(int fd, int newfd, int flags) {
   struct VfsInfo *info, *newinfo;
   int ret;
-  VFS_LOGF("VfsDup3(%d, %d, %d)", fd, newfd, flags);
+  LogInfo(__FILE__, __LINE__, "VfsDup3(%d, %d, %d)", fd, newfd, flags);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -1852,7 +1965,7 @@ int VfsDup3(int fd, int newfd, int flags) {
 int VfsPoll(struct pollfd *fds, nfds_t nfds, int timeout) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsPoll(%p, %lld, %d)", fds, (long long)nfds, timeout);
+  LogInfo(__FILE__, __LINE__, "VfsPoll(%p, %lld, %d)", fds, (long long)nfds, timeout);
   // Currently, blink only uses poll with nfds = 1 and timeout = 0
   unassert(nfds == 1);
   unassert(timeout == 0);
@@ -1870,7 +1983,7 @@ int VfsPoll(struct pollfd *fds, nfds_t nfds, int timeout) {
 
 int VfsSelect(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
               struct timespec *timeout, sigset_t *sigmask) {
-  VFS_LOGF("VfsSelect(%d, %p, %p, %p, %p, %p)", nfds, readfds, writefds,
+  LogInfo(__FILE__, __LINE__, "VfsSelect(%d, %p, %p, %p, %p, %p)", nfds, readfds, writefds,
            exceptfds, timeout, sigmask);
   return enosys();
 }
@@ -1878,7 +1991,7 @@ int VfsSelect(int nfds, fd_set *readfds, fd_set *writefds, fd_set *exceptfds,
 DIR *VfsOpendir(int fd) {
   struct VfsInfo *info;
   DIR *ret;
-  VFS_LOGF("VfsOpendir(%d)", fd);
+  LogInfo(__FILE__, __LINE__, "VfsOpendir(%d)", fd);
   if (VfsGetFd(fd, &info) == -1) {
     return NULL;
   }
@@ -1896,12 +2009,12 @@ DIR *VfsOpendir(int fd) {
 #ifdef HAVE_SEEKDIR
 void VfsSeekdir(DIR *dir, long loc) {
   struct VfsInfo *info;
-  VFS_LOGF("VfsSeekdir(%p, %ld)", dir, loc);
+  LogInfo(__FILE__, __LINE__, "VfsSeekdir(%p, %ld)", dir, loc);
   info = (struct VfsInfo *)dir;
   if (info->device->ops->Seekdir) {
     info->device->ops->Seekdir(info, loc);
   } else {
-    VFS_LOGF("seekdir() not supported by device %p.", info->device);
+    LogInfo(__FILE__, __LINE__, "seekdir() not supported by device %p.", info->device);
     eperm();
     return;
   }
@@ -1910,12 +2023,12 @@ void VfsSeekdir(DIR *dir, long loc) {
 long VfsTelldir(DIR *dir) {
   struct VfsInfo *info;
   long ret;
-  VFS_LOGF("VfsTelldir(%p)", dir);
+  LogInfo(__FILE__, __LINE__, "VfsTelldir(%p)", dir);
   info = (struct VfsInfo *)dir;
   if (info->device->ops->Telldir) {
     ret = info->device->ops->Telldir(info);
   } else {
-    VFS_LOGF("telldir() not supported by device %p.", info->device);
+    LogInfo(__FILE__, __LINE__, "telldir() not supported by device %p.", info->device);
     return eperm();
   }
   return ret;
@@ -1925,12 +2038,12 @@ long VfsTelldir(DIR *dir) {
 struct dirent *VfsReaddir(DIR *dir) {
   struct VfsInfo *info;
   struct dirent *ret;
-  VFS_LOGF("VfsReaddir(%p)", dir);
+  LogInfo(__FILE__, __LINE__, "VfsReaddir(%p)", dir);
   info = (struct VfsInfo *)dir;
   if (info->device->ops->Readdir) {
     ret = info->device->ops->Readdir(info);
   } else {
-    VFS_LOGF("readdir() not supported by device %p.", info->device);
+    LogInfo(__FILE__, __LINE__, "readdir() not supported by device %p.", info->device);
     eperm();
     ret = NULL;
   }
@@ -1939,12 +2052,12 @@ struct dirent *VfsReaddir(DIR *dir) {
 
 void VfsRewinddir(DIR *dir) {
   struct VfsInfo *info;
-  VFS_LOGF("VfsRewindDir(%p)", dir);
+  LogInfo(__FILE__, __LINE__, "VfsRewindDir(%p)", dir);
   info = (struct VfsInfo *)dir;
   if (info->device->ops->Rewinddir) {
     info->device->ops->Rewinddir(info);
   } else {
-    VFS_LOGF("rewinddir() not supported by device %p.", info->device);
+    LogInfo(__FILE__, __LINE__, "rewinddir() not supported by device %p.", info->device);
     eperm();
     return;
   }
@@ -1955,7 +2068,7 @@ int VfsClosedir(DIR *dir) {
   struct Dll *e;
   struct VfsFd *vfsfd;
   int ret;
-  VFS_LOGF("VfsClosedir(%p)", dir);
+  LogInfo(__FILE__, __LINE__, "VfsClosedir(%p)", dir);
   info = (struct VfsInfo *)dir;
   if (info->device->ops->Closedir) {
     ret = info->device->ops->Closedir(info);
@@ -1984,7 +2097,7 @@ int VfsBind(int fd, const struct sockaddr *addr, socklen_t addrlen) {
   struct VfsDevice *olddevice;
   char newname[PATH_MAX];
   int ret;
-  VFS_LOGF("VfsBind(%d, %p, %d)", fd, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "VfsBind(%d, %p, %d)", fd, addr, addrlen);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2031,7 +2144,7 @@ int VfsConnect(int fd, const struct sockaddr *addr, socklen_t addrlen) {
   struct VfsInfo *info, *sock;
   const char *name;
   int ret;
-  VFS_LOGF("VfsConnect(%d, %p, %d)", fd, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "VfsConnect(%d, %p, %d)", fd, addr, addrlen);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2060,7 +2173,7 @@ int VfsConnect(int fd, const struct sockaddr *addr, socklen_t addrlen) {
 int VfsAccept(int fd, struct sockaddr *addr, socklen_t *addrlen) {
   struct VfsInfo *info, *newinfo;
   int ret;
-  VFS_LOGF("VfsAccept(%d, %p, %p)", fd, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "VfsAccept(%d, %p, %p)", fd, addr, addrlen);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2086,7 +2199,7 @@ int VfsAccept(int fd, struct sockaddr *addr, socklen_t *addrlen) {
 int VfsListen(int fd, int backlog) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsListen(%d, %d)", fd, backlog);
+  LogInfo(__FILE__, __LINE__, "VfsListen(%d, %d)", fd, backlog);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2102,7 +2215,7 @@ int VfsListen(int fd, int backlog) {
 int VfsShutdown(int fd, int how) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsShutdown(%d, %d)", fd, how);
+  LogInfo(__FILE__, __LINE__, "VfsShutdown(%d, %d)", fd, how);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2119,7 +2232,7 @@ ssize_t VfsRecvmsg(int fd, struct msghdr *msg, int flags) {
   struct VfsInfo *info, *sock;
   const char *name;
   int ret;
-  VFS_LOGF("VfsRecvmsg(%d, %p, %d)", fd, msg, flags);
+  LogInfo(__FILE__, __LINE__, "VfsRecvmsg(%d, %p, %d)", fd, msg, flags);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2150,7 +2263,7 @@ ssize_t VfsSendmsg(int fd, const struct msghdr *msg, int flags) {
   struct VfsInfo *info, *sock;
   const char *name;
   int ret;
-  VFS_LOGF("VfsSendmsg(%d, %p, %d)", fd, msg, flags);
+  LogInfo(__FILE__, __LINE__, "VfsSendmsg(%d, %p, %d)", fd, msg, flags);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2182,7 +2295,7 @@ int VfsGetsockopt(int fd, int level, int optname, void *optval,
                   socklen_t *optlen) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsGetsockopt(%d, %d, %d, %p, %p)", fd, level, optname, optval,
+  LogInfo(__FILE__, __LINE__, "VfsGetsockopt(%d, %d, %d, %p, %p)", fd, level, optname, optval,
            optlen);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
@@ -2200,7 +2313,7 @@ int VfsSetsockopt(int fd, int level, int optname, const void *optval,
                   socklen_t optlen) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsSetsockopt(%d, %d, %d, %p, %u)", fd, level, optname, optval,
+  LogInfo(__FILE__, __LINE__, "VfsSetsockopt(%d, %d, %d, %p, %u)", fd, level, optname, optval,
            optlen);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
@@ -2217,7 +2330,7 @@ int VfsSetsockopt(int fd, int level, int optname, const void *optval,
 int VfsGetsockname(int fd, struct sockaddr *addr, socklen_t *addrlen) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsGetsockname(%d, %p, %p)", fd, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "VfsGetsockname(%d, %p, %p)", fd, addr, addrlen);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2233,7 +2346,7 @@ int VfsGetsockname(int fd, struct sockaddr *addr, socklen_t *addrlen) {
 int VfsGetpeername(int fd, struct sockaddr *addr, socklen_t *addrlen) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsGetpeername(%d, %p, %p)", fd, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "VfsGetpeername(%d, %p, %p)", fd, addr, addrlen);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2409,7 +2522,7 @@ void *VfsMmap(void *addr, size_t len, int prot, int flags, int fd,
   struct VfsMap *map, *newmap;
   void *ret;
   struct Dll *e, *original, *modified, *before;
-  VFS_LOGF("VfsMmap(%p, %zu, %d, %d, %d, %ld)", addr, len, prot, flags, fd,
+  LogInfo(__FILE__, __LINE__, "VfsMmap(%p, %zu, %d, %d, %d, %ld)", addr, len, prot, flags, fd,
            offset);
   LOCK(&g_vfs.mapslock);
   info = NULL;
@@ -2502,7 +2615,7 @@ int VfsMunmap(void *addr, size_t len) {
   struct Dll *e;
   struct VfsMap *map;
   struct Dll *original, *modified, *before;
-  VFS_LOGF("VfsMunmap(%p, %zu)", addr, len);
+  //LogInfo(__FILE__, __LINE__, "VfsMunmap(%p, %zu)", addr, len);
   original = modified = NULL;
   LOCK(&g_vfs.mapslock);
   if (VfsMapListExtractAffectedRange(&g_vfs.maps, addr, len, &original,
@@ -2541,7 +2654,7 @@ int VfsMprotect(void *addr, size_t len, int prot) {
   struct Dll *e;
   struct VfsMap *map;
   struct Dll *original, *modified, *before;
-  VFS_LOGF("VfsMprotect(%p, %zu, %d)", addr, len, prot);
+  LogInfo(__FILE__, __LINE__, "VfsMprotect(%p, %zu, %d)", addr, len, prot);
   original = modified = NULL;
   LOCK(&g_vfs.mapslock);
   if (VfsMapListExtractAffectedRange(&g_vfs.maps, addr, len, &original,
@@ -2590,7 +2703,7 @@ int VfsMsync(void *addr, size_t len, int flags) {
   struct VfsMap *map;
   void *currentaddr;
   size_t currentlen;
-  VFS_LOGF("VfsMsync(%p, %zu, %d)", addr, len, flags);
+  LogInfo(__FILE__, __LINE__, "VfsMsync(%p, %zu, %d)", addr, len, flags);
   if (msync(addr, len, flags) == -1) {
     return -1;
   }
@@ -2627,7 +2740,7 @@ int VfsMsync(void *addr, size_t len, int flags) {
 int VfsTcgetattr(int fd, struct termios *termios_p) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsTcgetattr(%d, %p)", fd, termios_p);
+  LogInfo(__FILE__, __LINE__, "VfsTcgetattr(%d, %p)", fd, termios_p);
   if (termios_p == NULL) {
     return efault();
   }
@@ -2648,7 +2761,7 @@ int VfsTcsetattr(int fd, int optional_actions,
                  const struct termios *termios_p) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsTcsetattr(%d, %d, %p)", fd, optional_actions, termios_p);
+  LogInfo(__FILE__, __LINE__, "VfsTcsetattr(%d, %d, %p)", fd, optional_actions, termios_p);
   if (termios_p == NULL) {
     return efault();
   }
@@ -2668,7 +2781,7 @@ int VfsTcsetattr(int fd, int optional_actions,
 int VfsTcflush(int fd, int queue_selector) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsTcflush(%d, %d)", fd, queue_selector);
+  LogInfo(__FILE__, __LINE__, "VfsTcflush(%d, %d)", fd, queue_selector);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2685,7 +2798,7 @@ int VfsTcflush(int fd, int queue_selector) {
 int VfsTcdrain(int fd) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsTcdrain(%d)", fd);
+  LogInfo(__FILE__, __LINE__, "VfsTcdrain(%d)", fd);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2702,7 +2815,7 @@ int VfsTcdrain(int fd) {
 int VfsTcsendbreak(int fd, int duration) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsTcsendbreak(%d, %d)", fd, duration);
+  LogInfo(__FILE__, __LINE__, "VfsTcsendbreak(%d, %d)", fd, duration);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2719,7 +2832,7 @@ int VfsTcsendbreak(int fd, int duration) {
 int VfsTcflow(int fd, int action) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsTcflow(%d, %d)", fd, action);
+  LogInfo(__FILE__, __LINE__, "VfsTcflow(%d, %d)", fd, action);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2736,7 +2849,7 @@ int VfsTcflow(int fd, int action) {
 pid_t VfsTcgetsid(int fd) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsTcgetsid(%d)", fd);
+  LogInfo(__FILE__, __LINE__, "VfsTcgetsid(%d)", fd);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2753,7 +2866,7 @@ pid_t VfsTcgetsid(int fd) {
 pid_t VfsTcgetpgrp(int fd) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsTcgetpgrp(%d)", fd);
+  LogInfo(__FILE__, __LINE__, "VfsTcgetpgrp(%d)", fd);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2770,7 +2883,7 @@ pid_t VfsTcgetpgrp(int fd) {
 int VfsTcsetpgrp(int fd, pid_t pgrp_id) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsTcsetpgrp(%d, %d)", fd, pgrp_id);
+  LogInfo(__FILE__, __LINE__, "VfsTcsetpgrp(%d, %d)", fd, pgrp_id);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2788,7 +2901,7 @@ int VfsTcsetpgrp(int fd, pid_t pgrp_id) {
 int VfsSockatmark(int fd) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsSockatmark(%d)", fd);
+  LogInfo(__FILE__, __LINE__, "VfsSockatmark(%d)", fd);
   if (VfsGetFd(fd, &info) == -1) {
     return -1;
   }
@@ -2805,7 +2918,7 @@ int VfsSockatmark(int fd) {
 int VfsExecve(const char *pathname, char *const *argv, char *const *envp) {
   struct VfsInfo *info;
   int ret;
-  VFS_LOGF("VfsExecve(\"%s\", %p, %p)", pathname, argv, envp);
+  LogInfo(__FILE__, __LINE__, "VfsExecve(\"%s\", %p, %p)", pathname, argv, envp);
   info = NULL;
   if ((ret = VfsOpen(AT_FDCWD, pathname, O_RDONLY | O_CLOEXEC, 0)) == -1) {
     return -1;
@@ -2826,7 +2939,7 @@ int VfsExecve(const char *pathname, char *const *argv, char *const *envp) {
 
 int VfsPipe(int fds[2]) {
   struct VfsInfo *infos[2];
-  VFS_LOGF("VfsPipe(%p)", fds);
+  LogInfo(__FILE__, __LINE__, "VfsPipe(%p)", fds);
   if (fds == NULL) {
     return efault();
   }
@@ -2851,7 +2964,7 @@ int VfsPipe(int fds[2]) {
 #ifdef HAVE_PIPE2
 int VfsPipe2(int fds[2], int flags) {
   struct VfsInfo *infos[2];
-  VFS_LOGF("VfsPipe2(%p, %d)", fds, flags);
+  LogInfo(__FILE__, __LINE__, "VfsPipe2(%p, %d)", fds, flags);
   if (fds == NULL) {
     return efault();
   }
@@ -2876,7 +2989,7 @@ int VfsPipe2(int fds[2], int flags) {
 int VfsSocket(int domain, int type, int protocol) {
   struct VfsInfo *info;
   int fd;
-  VFS_LOGF("VfsSocket(%d, %d, %d)", domain, type, protocol);
+  LogInfo(__FILE__, __LINE__, "VfsSocket(%d, %d, %d)", domain, type, protocol);
   if (HostfsSocket(domain, type, protocol, &info) == -1) {
     return -1;
   }
@@ -2889,7 +3002,7 @@ int VfsSocket(int domain, int type, int protocol) {
 
 int VfsSocketpair(int domain, int type, int protocol, int fds[2]) {
   struct VfsInfo *infos[2];
-  VFS_LOGF("VfsSocketPair(%d, %d, %d, %p)", domain, type, protocol, fds);
+  LogInfo(__FILE__, __LINE__, "VfsSocketPair(%d, %d, %d, %p)", domain, type, protocol, fds);
   if (fds == NULL) {
     return efault();
   }

@@ -41,7 +41,7 @@ struct Vfs {
   pthread_mutex_t_ mapslock;
 };
 
-struct VfsOps {
+  struct VfsOps {
   int (*Init)(const char *, u64, const void *, struct VfsDevice **,
               struct VfsMount **);
   int (*Freeinfo)(void *);
