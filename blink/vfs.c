@@ -351,6 +351,73 @@ int VfsMount(const char *source, const char *target, const char *fstype,
   return 0;
 }
 
+int VfsMountZip(void) {
+  struct VfsDevice *newdevice, *rootdevice, *d;
+  struct VfsMount *newmount;
+  struct Dll *e;
+  i64 nextdev;
+  char *newname;
+  LogInfo(__FILE__, __LINE__, "VfsMountZip: mounting /zip");
+  // Initialize hostfs device for "/zip" source path.
+  // This calls stat("/zip") which cosmo's libc handles internally.
+  if (g_hostfs.ops.Init("/zip", 0, NULL, &newdevice, &newmount) == -1) {
+    LogInfo(__FILE__, __LINE__, "VfsMountZip: HostfsInit failed");
+    return -1;
+  }
+  newname = strdup("zip");
+  if (newname == NULL) {
+    return enomem();
+  }
+  LOCK(&g_vfs.lock);
+  // Find the root device (dev 0) to add mount to its mount list.
+  rootdevice = NULL;
+  for (e = dll_first(g_vfs.devices); e; e = dll_next(g_vfs.devices, e)) {
+    d = VFS_DEVICE_CONTAINER(e);
+    if (d->dev == g_rootinfo->dev) {
+      rootdevice = d;
+      break;
+    }
+  }
+  if (rootdevice == NULL) {
+    UNLOCK(&g_vfs.lock);
+    free(newname);
+    LogInfo(__FILE__, __LINE__, "VfsMountZip: root device not found");
+    return enoent();
+  }
+  // Compute unique device number (same logic as VfsMount).
+  nextdev = 0;
+  for (e = dll_first(g_vfs.devices); e; e = dll_next(g_vfs.devices, e)) {
+    d = VFS_DEVICE_CONTAINER(e);
+    if (d->dev == nextdev) {
+      ++nextdev;
+    } else {
+      break;
+    }
+  }
+  newdevice->dev = nextdev;
+  if (e == NULL) {
+    dll_make_last(&g_vfs.devices, &newdevice->elem);
+  } else {
+    dll_splice_after(dll_prev(g_vfs.devices, e), &newdevice->elem);
+  }
+  newdevice->flags = 0;
+  // baseino must be the mount root's own ino (from stat("/zip")), NOT the
+  // parent's ino.  The NULL-childname branch of VfsTraverseMount fires when
+  // baseino == current node's ino.  If we used g_rootinfo->ino the mount
+  // would trigger at "/" itself instead of at "/zip".  The peek-ahead
+  // childname branch handles the initial "/" -> "/zip" transition.
+  newmount->baseino = newmount->root->ino;
+  newmount->root->dev = nextdev;
+  newmount->root->name = newname;
+  newmount->root->namelen = 3;
+  unassert(!VfsAcquireInfo(g_rootinfo, &newmount->root->parent));
+  dll_init(&newmount->elem);
+  dll_make_last(&rootdevice->mounts, &newmount->elem);
+  UNLOCK(&g_vfs.lock);
+  LogInfo(__FILE__, __LINE__, "VfsMountZip: mounted /zip, dev=%ld", nextdev);
+  return 0;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 
 int VfsCreateDevice(struct VfsDevice **output) {
@@ -573,14 +640,28 @@ static int VfsTraverseStackBuild(struct VfsInfo **stack, const char *path,
     LogInfo(__FILE__, __LINE__, "unassert");
     unassert(!VfsTraverseMount(stack, NULL));
 
-    if ((*stack)->device->ops)
+    // Peek-ahead: extract next path component and check if it's a mount
+    // point child. This allows traversing into mounts (like /zip) where the
+    // underlying device has no physical directory for the mount name.
     {
-      LogInfo(__FILE__, __LINE__, "first");
-      if ((*stack)->device->ops->Traverse)
-      {
-        LogInfo(__FILE__, __LINE__, "second");
+      const char *peek = path;
+      while (*peek == '/') ++peek;
+      const char *pend = peek;
+      while (*pend && *pend != '/') ++pend;
+      if (pend > peek && (size_t)(pend - peek) < VFS_NAME_MAX) {
+        char component[VFS_NAME_MAX];
+        memcpy(component, peek, pend - peek);
+        component[pend - peek] = '\0';
+        if (strcmp(component, ".") && strcmp(component, "..")) {
+          unassert(!VfsTraverseMount(stack, component));
+          if (!strcmp(component, ".")) {
+            // Mount was found — component was rewritten to "."
+            // Advance path past the consumed component and continue.
+            path = pend;
+            continue;
+          }
+        }
       }
-      //LogInfo(__FILE__, __LINE__, "name? %s", ((*stack)->device->name)); // nope, not there
     }
 
     if ((*stack)->device->ops && (*stack)->device->ops->Traverse) {
