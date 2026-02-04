@@ -108,7 +108,7 @@ int HostfsInit(const char *source, u64 flags, const void *data,
       HostfsHash(st.st_dev, (const char *)&st.st_ino, sizeof(st.st_ino));
   // Weak reference.
   (*device)->root = (*mount)->root;
-  VFS_LOGF("Mounted a hostfs device for \"%s\"", source);
+  LogInfo(__FILE__, __LINE__, "Mounted a hostfs device for \"%s\"", source);
   return 0;
 cleananddie:
   if (*device) {
@@ -151,7 +151,7 @@ int HostfsFreeInfo(void *info) {
   if (info == NULL) {
     return 0;
   }
-  VFS_LOGF("HostfsFreeInfo(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsFreeInfo(%p)", info);
   if (S_ISDIR(hostfsinfo->mode)) {
     if (hostfsinfo->dirstream) {
       unassert(!closedir(hostfsinfo->dirstream));
@@ -178,7 +178,7 @@ int HostfsFreeDevice(void *device) {
   if (device == NULL) {
     return 0;
   }
-  VFS_LOGF("HostfsFreeDevice(%p)", device);
+  LogInfo(__FILE__, __LINE__, "HostfsFreeDevice(%p)", device);
   free((void *)hostfsdevice->source);
   free(hostfsdevice);
   return 0;
@@ -236,7 +236,7 @@ static ssize_t HostfsGetOptimalDirFdName(struct VfsInfo *dir, const char *name,
   struct HostfsDevice *hostdevice;
   int ret = -1;
   ssize_t len1, len2;
-  VFS_LOGF("HostfsGetOptimalDirFdName(%p, \"%s\", %p, %p)", dir, name, hostfd,
+  LogInfo(__FILE__, __LINE__, "HostfsGetOptimalDirFdName(%p, \"%s\", %p, %p)", dir, name, hostfd,
            hostpath);
   if (!S_ISDIR(dir->mode)) {
     enotdir();
@@ -306,7 +306,7 @@ static ssize_t HostfsGetOptimalDirFdName(struct VfsInfo *dir, const char *name,
       }
     }
   }
-  VFS_LOGF("HostfsGetOptimalDirFdName: output=\"%s\"", hostpath);
+  LogInfo(__FILE__, __LINE__, "HostfsGetOptimalDirFdName: output=\"%s\"", hostpath);
   return ret;
 }
 
@@ -316,7 +316,7 @@ int HostfsFinddir(struct VfsInfo *parent, const char *name,
   struct stat st;
   int hostfd;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsFinddir(%p, \"%s\", %p)", parent, name, output);
+  LogInfo(__FILE__, __LINE__, "HostfsFinddir(%p, \"%s\", %p)", parent, name, output);
   if (parent == NULL || name == NULL || output == NULL) {
     efault();
     return -1;
@@ -331,7 +331,7 @@ int HostfsFinddir(struct VfsInfo *parent, const char *name,
     return -1;
   }
   if (fstatat(hostfd, hostname, &st, AT_SYMLINK_NOFOLLOW) == -1) {
-    VFS_LOGF("HostfsFinddir: fstatat(%d, \"%s\", %p, AT_SYMLINK_NOFOLLOW) "
+    LogInfo(__FILE__, __LINE__, "HostfsFinddir: fstatat(%d, \"%s\", %p, AT_SYMLINK_NOFOLLOW) "
              "failed (%d)",
              hostfd, hostname, &st, errno);
     goto cleananddie;
@@ -371,6 +371,7 @@ cleananddie:
 int HostfsTraverse(struct VfsInfo **dir, const char **path,
                    struct VfsInfo *root) {
   char hostpath[VFS_PATH_MAX];
+  char mattpath[VFS_PATH_MAX];
   struct VfsInfo *next, *original;
   struct HostfsInfo *nexthost;
   const char *currentpath = *path, *nextpath;
@@ -378,76 +379,122 @@ int HostfsTraverse(struct VfsInfo **dir, const char **path,
   ssize_t hostpathlen, currentnamelen;
   u32 currentdev;
   int hostfd;
-  VFS_LOGF("HostfsTraverse(%s, \"%s\", %p)", (*dir)->name, *path, root);
+  LogInfo(__FILE__, __LINE__, "HostfsTraverse(%s, \"%s\", %p)", (*dir)->name, *path, root);
   if ((hostpathlen = HostfsGetOptimalDirFdName(*dir, "", &hostfd, hostpath)) ==
       -1) {
+    LogInfo(__FILE__, __LINE__, "HostfsGetOptimalDirFdName failed");
     return -1;
   }
   if (hostpathlen > 0 && hostpath[hostpathlen - 1] != '/') {
     if (hostpathlen + 1 >= VFS_PATH_MAX) {
+      LogInfo(__FILE__, __LINE__, "name too long");
       return enametoolong();
     }
     hostpath[hostpathlen] = '/';
     ++hostpathlen;
   }
-  VFS_LOGF("HostfsTraverse: hostpath=\"%s\", hostfd=%d", hostpath, hostfd);
+  LogInfo(__FILE__, __LINE__, "HostfsTraverse: hostpath=\"%s\", hostfd=%d", hostpath, hostfd);
   original = *dir;
   next = NULL;
   nexthost = NULL;
   currentdev = (*dir)->dev;
+  LogInfo(__FILE__, __LINE__, "loop");
   while (*currentpath) {
     while (*currentpath == '/') {
+      LogInfo(__FILE__, __LINE__, "currentpath was /");
       ++currentpath;
     }
     nextpath = currentpath;
     while (*nextpath && *nextpath != '/') {
+      LogInfo(__FILE__, __LINE__, "still looking for nextpath /, but it's %c", *nextpath);
       ++nextpath;
     }
+    LogInfo(__FILE__, __LINE__, "nextpath = %s", nextpath);
+    LogInfo(__FILE__, __LINE__, "currentpath = %s", currentpath);
     if (nextpath == currentpath) {
+      LogInfo(__FILE__, __LINE__, "they're equal, so break");
       break;
     }
     if (!strcmp(currentpath, ".")) {
+      LogInfo(__FILE__, __LINE__, "currentpath == '.'");
       currentpath = nextpath;
+      LogInfo(__FILE__, __LINE__, "currentpath := %s", currentpath);
       continue;
     } else if (!strcmp(currentpath, "..")) {
+      LogInfo(__FILE__, __LINE__, "currentpath == '..'");
       currentpath = nextpath;
       if (*dir == root || (*dir)->parent == NULL) {
+        LogInfo(__FILE__, __LINE__, "dir == root or dir parent == null");
         continue;
       }
+      LogInfo(__FILE__, __LINE__, "dir == root or dir parent == null");
       unassert(!VfsAcquireInfo((*dir)->parent, &next));
       unassert(!VfsFreeInfo(*dir));
       *dir = next;
       if (next->dev != currentdev) {
+        LogInfo(__FILE__, __LINE__, "returning 0");
         *path = currentpath;
         return 0;
       }
       if (hostpathlen > 0) {
+        LogInfo(__FILE__, __LINE__, "hostpathlen = %d", hostpathlen);
+        LogInfo(__FILE__, __LINE__, "hostpath = %s", hostpath);
         --hostpathlen;
         while (hostpathlen > 0 && hostpath[hostpathlen - 1] != '/') {
           --hostpathlen;
         }
         hostpath[hostpathlen] = '\0';
+        LogInfo(__FILE__, __LINE__, "hostpath := %s", hostpath);
       }
       continue;
     }
     currentnamelen = nextpath - currentpath;
     if (currentnamelen >= VFS_NAME_MAX) {
+      LogInfo(__FILE__, __LINE__, "name too long");
       enametoolong();
       goto cleananddie;
     }
     if (currentnamelen + hostpathlen + 1 >= VFS_PATH_MAX) {
+      LogInfo(__FILE__, __LINE__, "name too long");
       enametoolong();
       goto cleananddie;
     }
-    memcpy(hostpath + hostpathlen, currentpath, currentnamelen);
-    hostpath[hostpathlen + currentnamelen] = '\0';
-    VFS_LOGF("HostfsTraverse: fstatat(%d, \"%s\", %p, AT_SYMLINK_NOFOLLOW)",
+    LogInfo(__FILE__, __LINE__, "ABOUT TO FSTATAT!  EVIL!");
+
+    LogInfo(__FILE__, __LINE__, "hostpath = %s, %d", hostpath, hostpathlen);
+    LogInfo(__FILE__, __LINE__, "currentpath = %s, %d", currentpath, currentnamelen);
+
+    memcpy(mattpath, currentpath, currentnamelen);
+    mattpath[currentnamelen] = '\0';
+    LogInfo(__FILE__, __LINE__, "mattpath = %s", mattpath);
+
+#define DOSPECIAL
+
+#ifdef DOSPECIAL
+    // SPECIAL CASE FOR ACTUALLY PORTABLE EXECUTABLE ZIP FILE
+    if (!strcmp(mattpath, "zip")) {
+      LogInfo(__FILE__, __LINE__, "special case zip file!");
+      hostpath[0] = '/';
+      memcpy(hostpath + 1, currentpath, currentnamelen);
+      hostpath[1 + currentnamelen] = '\0';
+    } else
+#endif
+    {
+      LogInfo(__FILE__, __LINE__, "boring case - append");
+      memcpy(hostpath + hostpathlen, currentpath, currentnamelen);
+      hostpath[hostpathlen + currentnamelen] = '\0';
+    }
+    LogInfo(__FILE__, __LINE__, "hostpath := %s", hostpath);
+    LogInfo(__FILE__, __LINE__, "HostfsTraverse: fstatat(%d, \"%s\", %p, AT_SYMLINK_NOFOLLOW)",
              hostfd, hostpath, &st);
     if (fstatat(hostfd, hostpath, &st, AT_SYMLINK_NOFOLLOW) == -1) {
+      LogInfo(__FILE__, __LINE__, "fstateat failed");
       if (original != *dir) {
+        LogInfo(__FILE__, __LINE__, "original != dir");
         *path = currentpath;
         return 0;
       } else {
+        LogInfo(__FILE__, __LINE__, "else");
         return enoent();
       }
     }
@@ -455,16 +502,19 @@ int HostfsTraverse(struct VfsInfo **dir, const char **path,
     hostpath[hostpathlen + currentnamelen + 1] = '\0';
     hostpathlen += currentnamelen + 1;
     if (HostfsCreateInfo(&nexthost) == -1) {
+      LogInfo(__FILE__, __LINE__, "HostfsCreateInfo failed");
       goto cleananddie;
     }
     nexthost->mode = st.st_mode;
     nexthost->filefd = -1;
     if (VfsCreateInfo(&next) == -1) {
+      LogInfo(__FILE__, __LINE__, "VfsCreateInfo failed");
       unassert(!HostfsFreeInfo(nexthost));
       goto cleananddie;
     }
     next->name = strndup(currentpath, currentnamelen);
     if (next->name == NULL) {
+      LogInfo(__FILE__, __LINE__, "name is null");
       unassert(!VfsFreeInfo(next));
       unassert(!HostfsFreeInfo(nexthost));
       enomem();
@@ -481,12 +531,13 @@ int HostfsTraverse(struct VfsInfo **dir, const char **path,
     next->parent = *dir;
     *dir = next;
     currentpath = nextpath;
-    VFS_LOGF("HostfsTraverse: Changed current path to \"%s\"", currentpath);
+    LogInfo(__FILE__, __LINE__, "HostfsTraverse: Changed current path to \"%s\"", currentpath);
     if (!S_ISDIR(st.st_mode)) {
       break;
     }
   }
   *path = currentpath;
+  LogInfo(__FILE__, __LINE__, "happy");
   return 0;
 cleananddie:
   while (original != *dir) {
@@ -503,7 +554,7 @@ ssize_t HostfsReadlink(struct VfsInfo *info, char **output) {
   char name[VFS_PATH_MAX];
   ssize_t len, reallen;
   int fd;
-  VFS_LOGF("HostfsReadlink(%p, %p)", info, output);
+  LogInfo(__FILE__, __LINE__, "HostfsReadlink(%p, %p)", info, output);
   if (info == NULL || output == NULL) {
     efault();
     return -1;
@@ -560,7 +611,7 @@ cleananddie:
 int HostfsMkdir(struct VfsInfo *parent, const char *name, mode_t mode) {
   int hostfd;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsMkdir(%p, \"%s\", %d)", parent, name, mode);
+  LogInfo(__FILE__, __LINE__, "HostfsMkdir(%p, \"%s\", %d)", parent, name, mode);
   if (HostfsGetOptimalDirFdName(parent, name, &hostfd, hostname) == -1) {
     return -1;
   }
@@ -570,7 +621,7 @@ int HostfsMkdir(struct VfsInfo *parent, const char *name, mode_t mode) {
 int HostfsMkfifo(struct VfsInfo *parent, const char *name, mode_t mode) {
   int hostfd;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsMkfifo(%p, \"%s\", %d)", parent, name, mode);
+  LogInfo(__FILE__, __LINE__, "HostfsMkfifo(%p, \"%s\", %d)", parent, name, mode);
   if (HostfsGetOptimalDirFdName(parent, name, &hostfd, hostname) == -1) {
     return -1;
   }
@@ -583,7 +634,7 @@ int HostfsOpen(struct VfsInfo *parent, const char *name, int flags, int mode,
   struct stat st;
   int hostfd;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsOpen(%p, \"%s\", %d, %d, %p)", parent, name, flags, mode,
+  LogInfo(__FILE__, __LINE__, "HostfsOpen(%p, \"%s\", %d, %d, %p)", parent, name, flags, mode,
            output);
   if (parent == NULL || name == NULL || output == NULL) {
     return efault();
@@ -600,7 +651,7 @@ int HostfsOpen(struct VfsInfo *parent, const char *name, int flags, int mode,
     goto cleananddie;
   }
   outputinfo->filefd = openat(hostfd, hostname, flags, mode);
-  VFS_LOGF("HostfsOpen: openat(%d, \"%s\", %d, %d) -> %d, %s", hostfd, hostname,
+  LogInfo(__FILE__, __LINE__, "HostfsOpen: openat(%d, \"%s\", %d, %d) -> %d, %s", hostfd, hostname,
            flags, mode, outputinfo->filefd, strerror(errno));
   if (outputinfo->filefd == -1) {
     goto cleananddie;
@@ -638,7 +689,7 @@ int HostfsAccess(struct VfsInfo *parent, const char *name, mode_t mode,
                  int flags) {
   int hostfd;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsAccess(%p, \"%s\", %d, %d)", parent, name, mode, flags);
+  LogInfo(__FILE__, __LINE__, "HostfsAccess(%p, \"%s\", %d, %d)", parent, name, mode, flags);
   if (HostfsGetOptimalDirFdName(parent, name, &hostfd, hostname) == -1) {
     return -1;
   }
@@ -649,7 +700,7 @@ int HostfsStat(struct VfsInfo *parent, const char *name, struct stat *st,
                int flags) {
   int hostfd, ret;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsStat(%p, \"%s\", %p, %d)", parent, name, st, flags);
+  LogInfo(__FILE__, __LINE__, "HostfsStat(%p, \"%s\", %p, %d)", parent, name, st, flags);
   if (HostfsGetOptimalDirFdName(parent, name, &hostfd, hostname) == -1) {
     return -1;
   }
@@ -665,7 +716,7 @@ int HostfsStat(struct VfsInfo *parent, const char *name, struct stat *st,
 int HostfsFstat(struct VfsInfo *info, struct stat *st) {
   struct HostfsInfo *hostinfo;
   int ret;
-  VFS_LOGF("HostfsFstat(%p, %p)", info, st);
+  LogInfo(__FILE__, __LINE__, "HostfsFstat(%p, %p)", info, st);
   if (info == NULL || st == NULL) {
     return efault();
   }
@@ -683,7 +734,7 @@ int HostfsChmod(struct VfsInfo *parent, const char *name, mode_t mode,
                 int flags) {
   int hostfd;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsChmod(%p, \"%s\", %d)", parent, name, mode);
+  LogInfo(__FILE__, __LINE__, "HostfsChmod(%p, \"%s\", %d)", parent, name, mode);
   if (HostfsGetOptimalDirFdName(parent, name, &hostfd, hostname) == -1) {
     return -1;
   }
@@ -692,7 +743,7 @@ int HostfsChmod(struct VfsInfo *parent, const char *name, mode_t mode,
 
 int HostfsFchmod(struct VfsInfo *info, mode_t mode) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsFchmod(%p, %d)", info, mode);
+  LogInfo(__FILE__, __LINE__, "HostfsFchmod(%p, %d)", info, mode);
   if (info == NULL) {
     return efault();
   }
@@ -704,7 +755,7 @@ int HostfsChown(struct VfsInfo *parent, const char *name, uid_t uid, gid_t gid,
                 int flags) {
   int hostfd;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsChown(%p, \"%s\", %d, %d)", parent, name, uid, gid);
+  LogInfo(__FILE__, __LINE__, "HostfsChown(%p, \"%s\", %d, %d)", parent, name, uid, gid);
   if (HostfsGetOptimalDirFdName(parent, name, &hostfd, hostname) == -1) {
     return -1;
   }
@@ -713,7 +764,7 @@ int HostfsChown(struct VfsInfo *parent, const char *name, uid_t uid, gid_t gid,
 
 int HostfsFchown(struct VfsInfo *info, uid_t uid, gid_t gid) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsFchown(%p, %d, %d)", info, uid, gid);
+  LogInfo(__FILE__, __LINE__, "HostfsFchown(%p, %d, %d)", info, uid, gid);
   if (info == NULL) {
     return efault();
   }
@@ -723,7 +774,7 @@ int HostfsFchown(struct VfsInfo *info, uid_t uid, gid_t gid) {
 
 int HostfsFtruncate(struct VfsInfo *info, off_t length) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsFtruncate(%p, %ld)", info, length);
+  LogInfo(__FILE__, __LINE__, "HostfsFtruncate(%p, %ld)", info, length);
   if (info == NULL) {
     return efault();
   }
@@ -734,7 +785,7 @@ int HostfsFtruncate(struct VfsInfo *info, off_t length) {
 int HostfsClose(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
   int ret;
-  VFS_LOGF("HostfsClose(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsClose(%p)", info);
   if (info == NULL) {
     return efault();
   }
@@ -748,7 +799,7 @@ int HostfsLink(struct VfsInfo *oldparent, const char *oldname,
                struct VfsInfo *newparent, const char *newname, int flags) {
   int oldhostfd, newhostfd;
   char oldhostname[VFS_PATH_MAX], newhostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsLink(%p, \"%s\", %p, \"%s\")", oldparent, oldname, newparent,
+  LogInfo(__FILE__, __LINE__, "HostfsLink(%p, \"%s\", %p, \"%s\")", oldparent, oldname, newparent,
            newname);
   if (HostfsGetOptimalDirFdName(oldparent, oldname, &oldhostfd, oldhostname) ==
       -1) {
@@ -764,7 +815,7 @@ int HostfsLink(struct VfsInfo *oldparent, const char *oldname,
 int HostfsUnlink(struct VfsInfo *parent, const char *name, int flags) {
   int hostfd;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsUnlink(%p, \"%s\")", parent, name);
+  LogInfo(__FILE__, __LINE__, "HostfsUnlink(%p, \"%s\")", parent, name);
   if (HostfsGetOptimalDirFdName(parent, name, &hostfd, hostname) == -1) {
     return -1;
   }
@@ -773,7 +824,7 @@ int HostfsUnlink(struct VfsInfo *parent, const char *name, int flags) {
 
 ssize_t HostfsRead(struct VfsInfo *info, void *buf, size_t size) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsRead(%p, %p, %ld)", info, buf, size);
+  LogInfo(__FILE__, __LINE__, "HostfsRead(%p, %p, %ld)", info, buf, size);
   if (info == NULL || buf == NULL) {
     return efault();
   }
@@ -783,7 +834,7 @@ ssize_t HostfsRead(struct VfsInfo *info, void *buf, size_t size) {
 
 ssize_t HostfsWrite(struct VfsInfo *info, const void *buf, size_t size) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsWrite(%p, %p, %ld)", info, buf, size);
+  LogInfo(__FILE__, __LINE__, "HostfsWrite(%p, %p, %ld)", info, buf, size);
   if (info == NULL || buf == NULL) {
     return efault();
   }
@@ -794,7 +845,7 @@ ssize_t HostfsWrite(struct VfsInfo *info, const void *buf, size_t size) {
 ssize_t HostfsPread(struct VfsInfo *info, void *buf, size_t size,
                     off_t offset) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsPread(%p, %p, %ld, %ld)", info, buf, size, offset);
+  LogInfo(__FILE__, __LINE__, "HostfsPread(%p, %p, %ld, %ld)", info, buf, size, offset);
   if (info == NULL || buf == NULL) {
     return efault();
   }
@@ -805,7 +856,7 @@ ssize_t HostfsPread(struct VfsInfo *info, void *buf, size_t size,
 ssize_t HostfsPwrite(struct VfsInfo *info, const void *buf, size_t size,
                      off_t offset) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsPwrite(%p, %p, %ld, %ld)", info, buf, size, offset);
+  LogInfo(__FILE__, __LINE__, "HostfsPwrite(%p, %p, %ld, %ld)", info, buf, size, offset);
   if (info == NULL || buf == NULL) {
     return efault();
   }
@@ -815,7 +866,7 @@ ssize_t HostfsPwrite(struct VfsInfo *info, const void *buf, size_t size,
 
 ssize_t HostfsReadv(struct VfsInfo *info, const struct iovec *iov, int iovcnt) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsReadv(%p, %p, %d)", info, iov, iovcnt);
+  LogInfo(__FILE__, __LINE__, "HostfsReadv(%p, %p, %d)", info, iov, iovcnt);
   if (info == NULL || iov == NULL) {
     return efault();
   }
@@ -826,7 +877,7 @@ ssize_t HostfsReadv(struct VfsInfo *info, const struct iovec *iov, int iovcnt) {
 ssize_t HostfsWritev(struct VfsInfo *info, const struct iovec *iov,
                      int iovcnt) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsWritev(%p, %p, %d)", info, iov, iovcnt);
+  LogInfo(__FILE__, __LINE__, "HostfsWritev(%p, %p, %d)", info, iov, iovcnt);
   if (info == NULL || iov == NULL) {
     return efault();
   }
@@ -837,7 +888,7 @@ ssize_t HostfsWritev(struct VfsInfo *info, const struct iovec *iov,
 ssize_t HostfsPreadv(struct VfsInfo *info, const struct iovec *iov, int iovcnt,
                      off_t offset) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsPreadv(%p, %p, %d, %ld)", info, iov, iovcnt, offset);
+  LogInfo(__FILE__, __LINE__, "HostfsPreadv(%p, %p, %d, %ld)", info, iov, iovcnt, offset);
   if (info == NULL || iov == NULL) {
     return efault();
   }
@@ -848,7 +899,7 @@ ssize_t HostfsPreadv(struct VfsInfo *info, const struct iovec *iov, int iovcnt,
 ssize_t HostfsPwritev(struct VfsInfo *info, const struct iovec *iov, int iovcnt,
                       off_t offset) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsPwritev(%p, %p, %d, %ld)", info, iov, iovcnt, offset);
+  LogInfo(__FILE__, __LINE__, "HostfsPwritev(%p, %p, %d, %ld)", info, iov, iovcnt, offset);
   if (info == NULL || iov == NULL) {
     return efault();
   }
@@ -858,7 +909,7 @@ ssize_t HostfsPwritev(struct VfsInfo *info, const struct iovec *iov, int iovcnt,
 
 off_t HostfsSeek(struct VfsInfo *info, off_t offset, int whence) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsLseek(%p, %ld, %d)", info, offset, whence);
+  LogInfo(__FILE__, __LINE__, "HostfsLseek(%p, %ld, %d)", info, offset, whence);
   if (info == NULL) {
     return efault();
   }
@@ -868,7 +919,7 @@ off_t HostfsSeek(struct VfsInfo *info, off_t offset, int whence) {
 
 int HostfsFsync(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsFsync(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsFsync(%p)", info);
   if (info == NULL) {
     return efault();
   }
@@ -878,7 +929,7 @@ int HostfsFsync(struct VfsInfo *info) {
 
 int HostfsFdatasync(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsFdatasync(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsFdatasync(%p)", info);
   if (info == NULL) {
     return efault();
   }
@@ -892,7 +943,7 @@ int HostfsFdatasync(struct VfsInfo *info) {
 
 int HostfsFlock(struct VfsInfo *info, int operation) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsFlock(%p, %d)", info, operation);
+  LogInfo(__FILE__, __LINE__, "HostfsFlock(%p, %d)", info, operation);
   if (info == NULL) {
     return efault();
   }
@@ -903,7 +954,7 @@ int HostfsFlock(struct VfsInfo *info, int operation) {
 int HostfsFcntl(struct VfsInfo *info, int cmd, va_list args) {
   struct HostfsInfo *hostinfo;
   int rc;
-  VFS_LOGF("HostfsFcntl(%p, %d, ...)", info, cmd);
+  LogInfo(__FILE__, __LINE__, "HostfsFcntl(%p, %d, ...)", info, cmd);
   if (info == NULL) {
     return efault();
   }
@@ -968,7 +1019,7 @@ int HostfsFcntl(struct VfsInfo *info, int cmd, va_list args) {
 
 int HostfsIoctl(struct VfsInfo *info, unsigned long request, const void *arg) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsIoctl(%p, %lu, %p)", info, request, arg);
+  LogInfo(__FILE__, __LINE__, "HostfsIoctl(%p, %lu, %p)", info, request, arg);
   if (info == NULL) {
     return efault();
   }
@@ -978,7 +1029,7 @@ int HostfsIoctl(struct VfsInfo *info, unsigned long request, const void *arg) {
 
 int HostfsDup(struct VfsInfo *info, struct VfsInfo **newinfo) {
   struct HostfsInfo *hostinfo, *newhostinfo;
-  VFS_LOGF("HostfsDup(%p, %p)", info, newinfo);
+  LogInfo(__FILE__, __LINE__, "HostfsDup(%p, %p)", info, newinfo);
   if (info == NULL || newinfo == NULL) {
     return efault();
   }
@@ -1037,7 +1088,7 @@ cleananddie:
 #ifdef HAVE_DUP3
 int HostfsDup3(struct VfsInfo *info, struct VfsInfo **newinfo, int flags) {
   struct HostfsInfo *hostinfo, *newhostinfo;
-  VFS_LOGF("HostfsDup3(%p, %p, %i)", info, newinfo, flags);
+  LogInfo(__FILE__, __LINE__, "HostfsDup3(%p, %p, %i)", info, newinfo, flags);
   if (info == NULL || newinfo == NULL) {
     return efault();
   }
@@ -1085,7 +1136,7 @@ int HostfsPoll(struct VfsInfo **infos, struct pollfd *fds, nfds_t nfds,
                int timeout) {
   int rc;
   int oldfd;
-  VFS_LOGF("HostfsPoll(%p, %lli, %i)", infos, (long long)nfds, timeout);
+  LogInfo(__FILE__, __LINE__, "HostfsPoll(%p, %lli, %i)", infos, (long long)nfds, timeout);
   if (infos == NULL) {
     return efault();
   }
@@ -1101,7 +1152,7 @@ int HostfsPoll(struct VfsInfo **infos, struct pollfd *fds, nfds_t nfds,
 int HostfsOpendir(struct VfsInfo *info, struct VfsInfo **output) {
   struct HostfsInfo *hostinfo;
   DIR *dirstream;
-  VFS_LOGF("HostfsOpendir(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsOpendir(%p)", info);
   if (info == NULL || output == NULL) {
     return efault();
   }
@@ -1119,7 +1170,7 @@ int HostfsOpendir(struct VfsInfo *info, struct VfsInfo **output) {
 #ifdef HAVE_SEEKDIR
 void HostfsSeekdir(struct VfsInfo *info, long loc) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsSeekdir(%p, %ld)", info, loc);
+  LogInfo(__FILE__, __LINE__, "HostfsSeekdir(%p, %ld)", info, loc);
   if (info == NULL) {
     efault();
     return;
@@ -1130,7 +1181,7 @@ void HostfsSeekdir(struct VfsInfo *info, long loc) {
 
 long HostfsTelldir(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsTelldir(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsTelldir(%p)", info);
   if (info == NULL) {
     efault();
     return -1;
@@ -1142,7 +1193,7 @@ long HostfsTelldir(struct VfsInfo *info) {
 
 struct dirent *HostfsReaddir(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsReaddir(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsReaddir(%p)", info);
   if (info == NULL) {
     efault();
     return NULL;
@@ -1153,7 +1204,7 @@ struct dirent *HostfsReaddir(struct VfsInfo *info) {
 
 void HostfsRewinddir(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsRewinddir(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsRewinddir(%p)", info);
   if (info == NULL) {
     efault();
     return;
@@ -1164,7 +1215,7 @@ void HostfsRewinddir(struct VfsInfo *info) {
 
 int HostfsClosedir(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsClosedir(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsClosedir(%p)", info);
   if (info == NULL) {
     return efault();
   }
@@ -1186,7 +1237,7 @@ int HostfsBind(struct VfsInfo *info, const struct sockaddr *addr,
   char hostpath[VFS_PATH_MAX];
   size_t len;
   int ret;
-  VFS_LOGF("HostfsBind(%p, %p, %i)", info, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "HostfsBind(%p, %p, %i)", info, addr, addrlen);
   if (info == NULL || addr == NULL) {
     return efault();
   }
@@ -1232,7 +1283,7 @@ int HostfsConnect(struct VfsInfo *info, const struct sockaddr *addr,
                   socklen_t addrlen) {
   struct HostfsInfo *hostinfo;
   int ret;
-  VFS_LOGF("HostfsConnect(%p, %p, %i)", info, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "HostfsConnect(%p, %p, %i)", info, addr, addrlen);
   if (info == NULL || addr == NULL) {
     return efault();
   }
@@ -1252,7 +1303,7 @@ int HostfsConnectUnix(struct VfsInfo *sock, struct VfsInfo *info,
   char hostpath[VFS_PATH_MAX];
   size_t hostpathlen;
   int ret;
-  VFS_LOGF("HostfsConnectUnix(%p, %p, %p, %i)", sock, info, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "HostfsConnectUnix(%p, %p, %p, %i)", sock, info, addr, addrlen);
   if (sock == NULL || info == NULL || addr == NULL) {
     return efault();
   }
@@ -1284,7 +1335,7 @@ int HostfsAccept(struct VfsInfo *info, struct sockaddr *addr,
                  socklen_t *addrlen, struct VfsInfo **output) {
   struct HostfsInfo *hostinfo, *newhostinfo;
   int ret;
-  VFS_LOGF("HostfsAccept(%p, %p, %p)", info, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "HostfsAccept(%p, %p, %p)", info, addr, addrlen);
   if (info == NULL || output == NULL) {
     return efault();
   }
@@ -1317,7 +1368,7 @@ int HostfsAccept(struct VfsInfo *info, struct sockaddr *addr,
 
 int HostfsListen(struct VfsInfo *info, int backlog) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsListen(%p, %i)", info, backlog);
+  LogInfo(__FILE__, __LINE__, "HostfsListen(%p, %i)", info, backlog);
   if (info == NULL) {
     return efault();
   }
@@ -1327,7 +1378,7 @@ int HostfsListen(struct VfsInfo *info, int backlog) {
 
 int HostfsShutdown(struct VfsInfo *info, int how) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsShutdown(%p, %i)", info, how);
+  LogInfo(__FILE__, __LINE__, "HostfsShutdown(%p, %i)", info, how);
   if (info == NULL) {
     return efault();
   }
@@ -1337,7 +1388,7 @@ int HostfsShutdown(struct VfsInfo *info, int how) {
 
 ssize_t HostfsRecvmsg(struct VfsInfo *info, struct msghdr *msg, int flags) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsRecvmsg(%p, %p, %i)", info, msg, flags);
+  LogInfo(__FILE__, __LINE__, "HostfsRecvmsg(%p, %p, %i)", info, msg, flags);
   if (info == NULL || msg == NULL) {
     return efault();
   }
@@ -1348,7 +1399,7 @@ ssize_t HostfsRecvmsg(struct VfsInfo *info, struct msghdr *msg, int flags) {
 ssize_t HostfsSendmsg(struct VfsInfo *info, const struct msghdr *msg,
                       int flags) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsSendmsg(%p, %p, %i)", info, msg, flags);
+  LogInfo(__FILE__, __LINE__, "HostfsSendmsg(%p, %p, %i)", info, msg, flags);
   if (info == NULL || msg == NULL) {
     return efault();
   }
@@ -1364,7 +1415,7 @@ ssize_t HostfsRecvmsgUnix(struct VfsInfo *sock, struct VfsInfo *info,
   char hostpath[VFS_PATH_MAX];
   size_t hostpathlen;
   int ret;
-  VFS_LOGF("HostfsRecvmsgUnix(%p, %p, %p, %i)", sock, info, msg, flags);
+  LogInfo(__FILE__, __LINE__, "HostfsRecvmsgUnix(%p, %p, %p, %i)", sock, info, msg, flags);
   if (sock == NULL || info == NULL || msg == NULL) {
     return efault();
   }
@@ -1400,7 +1451,7 @@ ssize_t HostfsSendmsgUnix(struct VfsInfo *sock, struct VfsInfo *info,
   char hostpath[VFS_PATH_MAX];
   size_t hostpathlen;
   int ret;
-  VFS_LOGF("HostfsSendmsgUnix(%p, %p, %p, %i)", sock, info, msg, flags);
+  LogInfo(__FILE__, __LINE__, "HostfsSendmsgUnix(%p, %p, %p, %i)", sock, info, msg, flags);
   if (sock == NULL || info == NULL || msg == NULL) {
     return efault();
   }
@@ -1427,7 +1478,7 @@ ssize_t HostfsSendmsgUnix(struct VfsInfo *sock, struct VfsInfo *info,
 int HostfsGetsockopt(struct VfsInfo *info, int level, int optname, void *optval,
                      socklen_t *optlen) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsGetsockopt(%p, %i, %i, %p, %p)", info, level, optname, optval,
+  LogInfo(__FILE__, __LINE__, "HostfsGetsockopt(%p, %i, %i, %p, %p)", info, level, optname, optval,
            optlen);
   if (info == NULL || optval == NULL || optlen == NULL) {
     return efault();
@@ -1439,7 +1490,7 @@ int HostfsGetsockopt(struct VfsInfo *info, int level, int optname, void *optval,
 int HostfsSetsockopt(struct VfsInfo *info, int level, int optname,
                      const void *optval, socklen_t optlen) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsSetsockopt(%p, %i, %i, %p, %i)", info, level, optname, optval,
+  LogInfo(__FILE__, __LINE__, "HostfsSetsockopt(%p, %i, %i, %p, %i)", info, level, optname, optval,
            optlen);
   if (info == NULL || optval == NULL) {
     return efault();
@@ -1453,7 +1504,7 @@ int HostfsGetsockname(struct VfsInfo *info, struct sockaddr *addr,
   struct HostfsInfo *hostinfo;
   struct sockaddr_un *un;
   char *path;
-  VFS_LOGF("HostfsGetsockname(%p, %p, %p)", info, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "HostfsGetsockname(%p, %p, %p)", info, addr, addrlen);
   if (info == NULL || addr == NULL || addrlen == NULL) {
     return efault();
   }
@@ -1486,7 +1537,7 @@ int HostfsGetpeername(struct VfsInfo *info, struct sockaddr *addr,
   struct sockaddr_un *hostun;
   socklen_t hostlen = sizeof(*hostun);
   char *s;
-  VFS_LOGF("HostfsGetpeername(%p, %p, %p)", info, addr, addrlen);
+  LogInfo(__FILE__, __LINE__, "HostfsGetpeername(%p, %p, %p)", info, addr, addrlen);
   if (info == NULL || addr == NULL || addrlen == NULL) {
     return efault();
   }
@@ -1546,7 +1597,7 @@ int HostfsRename(struct VfsInfo *oldinfo, const char *oldname,
                  struct VfsInfo *newinfo, const char *newname) {
   int oldhostfd, newhostfd;
   char oldhostname[VFS_PATH_MAX], newhostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsRename(%p, %s, %p, %s)", oldinfo, oldname, newinfo, newname);
+  LogInfo(__FILE__, __LINE__, "HostfsRename(%p, %s, %p, %s)", oldinfo, oldname, newinfo, newname);
   if (HostfsGetOptimalDirFdName(oldinfo, oldname, &oldhostfd, oldhostname) ==
       -1) {
     return -1;
@@ -1563,7 +1614,7 @@ int HostfsUtime(struct VfsInfo *info, const char *name,
                 const struct timespec times[2], int flags) {
   int hostfd;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsUtime(%p, %s, %p, %d)", info, name, times, flags);
+  LogInfo(__FILE__, __LINE__, "HostfsUtime(%p, %s, %p, %d)", info, name, times, flags);
   if (HostfsGetOptimalDirFdName(info, name, &hostfd, hostname) == -1) {
     return -1;
   }
@@ -1572,7 +1623,7 @@ int HostfsUtime(struct VfsInfo *info, const char *name,
 
 int HostfsFutime(struct VfsInfo *info, const struct timespec times[2]) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsFutime(%p, %p)", info, times);
+  LogInfo(__FILE__, __LINE__, "HostfsFutime(%p, %p)", info, times);
   if (info == NULL) {
     return efault();
   }
@@ -1586,7 +1637,7 @@ int HostfsFutime(struct VfsInfo *info, const struct timespec times[2]) {
 int HostfsSymlink(const char *target, struct VfsInfo *info, const char *name) {
   int hostfd;
   char hostname[VFS_PATH_MAX];
-  VFS_LOGF("HostfsSymlink(%s, %p, %s)", target, info, name);
+  LogInfo(__FILE__, __LINE__, "HostfsSymlink(%s, %p, %s)", target, info, name);
   if (HostfsGetOptimalDirFdName(info, name, &hostfd, hostname) == -1) {
     return -1;
   }
@@ -1600,7 +1651,7 @@ void *HostfsMmap(struct VfsInfo *info, void *addr, size_t len, int prot,
 #endif
   void *ret;
   int fd;
-  VFS_LOGF("HostfsMmap(%p, %p, %zu, %d, %d, %zd)", info, addr, len, prot, flags,
+  LogInfo(__FILE__, __LINE__, "HostfsMmap(%p, %p, %zu, %d, %d, %zd)", info, addr, len, prot, flags,
            offset);
   if (info == NULL) {
     efault();
@@ -1618,32 +1669,32 @@ void *HostfsMmap(struct VfsInfo *info, void *addr, size_t len, int prot,
   }
 #endif
   ret = mmap(addr, len, prot, flags, fd, offset);
-  VFS_LOGF("mmap(%p, %zu, %d, %d, %d, %zd) -> %p", addr, len, prot, flags, fd,
+  LogInfo(__FILE__, __LINE__, "mmap(%p, %zu, %d, %d, %d, %zd) -> %p", addr, len, prot, flags, fd,
            offset, ret);
   return ret;
 }
 
 int HostfsMunmap(struct VfsInfo *info, void *addr, size_t len) {
-  VFS_LOGF("HostfsMunmap(%p, %p, %zu)", info, addr, len);
+  LogInfo(__FILE__, __LINE__, "HostfsMunmap(%p, %p, %zu)", info, addr, len);
   // Do nothing. The host should handle all the cleanup.
   return 0;
 }
 
 int HostfsMprotect(struct VfsInfo *info, void *addr, size_t len, int prot) {
-  VFS_LOGF("HostfsMprotect(%p, %p, %zu, %d)", info, addr, len, prot);
+  LogInfo(__FILE__, __LINE__, "HostfsMprotect(%p, %p, %zu, %d)", info, addr, len, prot);
   // Do nothing, as the host should handle the protection details.
   return 0;
 }
 
 int HostfsMsync(struct VfsInfo *info, void *addr, size_t len, int flags) {
-  VFS_LOGF("HostfsMsync(%p, %p, %zu, %d)", info, addr, len, flags);
+  LogInfo(__FILE__, __LINE__, "HostfsMsync(%p, %p, %zu, %d)", info, addr, len, flags);
   // Do nothing, as the host should handle the syncing.
   return 0;
 }
 
 int HostfsTcgetattr(struct VfsInfo *info, struct termios *termios) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsTcgetattr(%p, %p)", info, termios);
+  LogInfo(__FILE__, __LINE__, "HostfsTcgetattr(%p, %p)", info, termios);
   if (info == NULL || termios == NULL) {
     return efault();
   }
@@ -1654,7 +1705,7 @@ int HostfsTcgetattr(struct VfsInfo *info, struct termios *termios) {
 int HostfsTcsetattr(struct VfsInfo *info, int optional_actions,
                     const struct termios *termios) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsTcsetattr(%p, %d, %p)", info, optional_actions, termios);
+  LogInfo(__FILE__, __LINE__, "HostfsTcsetattr(%p, %d, %p)", info, optional_actions, termios);
   if (info == NULL || termios == NULL) {
     return efault();
   }
@@ -1664,7 +1715,7 @@ int HostfsTcsetattr(struct VfsInfo *info, int optional_actions,
 
 int HostfsTcflush(struct VfsInfo *info, int queue_selector) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsTcflush(%p, %d)", info, queue_selector);
+  LogInfo(__FILE__, __LINE__, "HostfsTcflush(%p, %d)", info, queue_selector);
   if (info == NULL) {
     return efault();
   }
@@ -1674,7 +1725,7 @@ int HostfsTcflush(struct VfsInfo *info, int queue_selector) {
 
 int HostfsTcdrain(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsTcdrain(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsTcdrain(%p)", info);
   if (info == NULL) {
     return efault();
   }
@@ -1684,7 +1735,7 @@ int HostfsTcdrain(struct VfsInfo *info) {
 
 int HostfsTcsendbreak(struct VfsInfo *info, int duration) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsTcsendbreak(%p, %d)", info, duration);
+  LogInfo(__FILE__, __LINE__, "HostfsTcsendbreak(%p, %d)", info, duration);
   if (info == NULL) {
     return efault();
   }
@@ -1694,7 +1745,7 @@ int HostfsTcsendbreak(struct VfsInfo *info, int duration) {
 
 int HostfsTcflow(struct VfsInfo *info, int action) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsTcflow(%p, %d)", info, action);
+  LogInfo(__FILE__, __LINE__, "HostfsTcflow(%p, %d)", info, action);
   if (info == NULL) {
     return efault();
   }
@@ -1704,7 +1755,7 @@ int HostfsTcflow(struct VfsInfo *info, int action) {
 
 pid_t HostfsTcgetsid(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsTcgetsid(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsTcgetsid(%p)", info);
   if (info == NULL) {
     return efault();
   }
@@ -1714,7 +1765,7 @@ pid_t HostfsTcgetsid(struct VfsInfo *info) {
 
 pid_t HostfsTcgetpgrp(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsTcgetpgrp(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsTcgetpgrp(%p)", info);
   if (info == NULL) {
     return efault();
   }
@@ -1724,7 +1775,7 @@ pid_t HostfsTcgetpgrp(struct VfsInfo *info) {
 
 int HostfsTcsetpgrp(struct VfsInfo *info, pid_t pgrp) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsTcsetpgrp(%p, %d)", info, pgrp);
+  LogInfo(__FILE__, __LINE__, "HostfsTcsetpgrp(%p, %d)", info, pgrp);
   if (info == NULL) {
     return efault();
   }
@@ -1735,7 +1786,7 @@ int HostfsTcsetpgrp(struct VfsInfo *info, pid_t pgrp) {
 #ifdef HAVE_SOCKATMARK
 int HostfsSockatmark(struct VfsInfo *info) {
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsSockatmark(%p)", info);
+  LogInfo(__FILE__, __LINE__, "HostfsSockatmark(%p)", info);
   if (info == NULL) {
     return efault();
   }
@@ -1747,7 +1798,7 @@ int HostfsSockatmark(struct VfsInfo *info) {
 int HostfsPipe(struct VfsInfo *infos[2]) {
   int i;
   int fds[2];
-  VFS_LOGF("HostfsPipe(%p)", infos);
+  LogInfo(__FILE__, __LINE__, "HostfsPipe(%p)", infos);
   if (infos == NULL) {
     return efault();
   }
@@ -1778,7 +1829,7 @@ cleananddie:
 int HostfsPipe2(struct VfsInfo *infos[2], int flags) {
   int i;
   int fds[2];
-  VFS_LOGF("HostfsPipe2(%p, %d)", infos, flags);
+  LogInfo(__FILE__, __LINE__, "HostfsPipe2(%p, %d)", infos, flags);
   if (infos == NULL) {
     return efault();
   }
@@ -1807,7 +1858,7 @@ cleananddie:
 
 int HostfsSocket(int domain, int type, int protocol, struct VfsInfo **output) {
   int fd;
-  VFS_LOGF("HostfsSocket(%d, %d, %d, %p)", domain, type, protocol, output);
+  LogInfo(__FILE__, __LINE__, "HostfsSocket(%d, %d, %d, %p)", domain, type, protocol, output);
   if (output == NULL) {
     return efault();
   }
@@ -1835,7 +1886,7 @@ int HostfsSocketpair(int domain, int type, int protocol,
                      struct VfsInfo *infos[2]) {
   int i;
   int fds[2];
-  VFS_LOGF("HostfsSocketpair(%d, %d, %d, %p)", domain, type, protocol, infos);
+  LogInfo(__FILE__, __LINE__, "HostfsSocketpair(%d, %d, %d, %p)", domain, type, protocol, infos);
   if (infos == NULL) {
     return efault();
   }
@@ -1866,7 +1917,7 @@ int HostfsFexecve(struct VfsInfo *info, char *const *argv, char *const *envp) {
 #ifndef HAVE_FEXECVE
   char path[VFS_PATH_MAX];
 #endif
-  VFS_LOGF("HostfsFexecve(%p, %p, %p)", info, argv, envp);
+  LogInfo(__FILE__, __LINE__, "HostfsFexecve(%p, %p, %p)", info, argv, envp);
 #ifdef HAVE_FEXECVE
   if (info == NULL) {
     return efault();
@@ -1893,7 +1944,7 @@ struct VfsDevice g_anondevice = {
 int HostfsWrapFd(int fd, bool dodup, struct VfsInfo **output) {
   struct stat st;
   struct HostfsInfo *hostinfo;
-  VFS_LOGF("HostfsWrapFd(%d, %p)", fd, output);
+  LogInfo(__FILE__, __LINE__, "HostfsWrapFd(%d, %p)", fd, output);
   if (output == NULL) {
     return efault();
   }

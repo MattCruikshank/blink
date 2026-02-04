@@ -41,7 +41,7 @@ struct Vfs {
   pthread_mutex_t_ mapslock;
 };
 
-struct VfsOps {
+  struct VfsOps {
   int (*Init)(const char *, u64, const void *, struct VfsDevice **,
               struct VfsMount **);
   int (*Freeinfo)(void *);
@@ -192,6 +192,7 @@ int VfsChdir(const char *);
 char *VfsGetcwd(char *, size_t);
 int VfsChroot(const char *);
 int VfsMount(const char *, const char *, const char *, u64, const void *);
+int VfsMountZip(void);
 int VfsUnlink(int, const char *, int);
 int VfsMkdir(int, const char *, mode_t);
 int VfsMkfifo(int, const char *, mode_t);

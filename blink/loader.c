@@ -721,7 +721,10 @@ void LoadProgram(struct Machine *m, char *execfn, char *prog, char **args,
     free(g_progname);
     g_progname = strdup(prog);
     SYS_LOGF("LoadProgram %s", prog);
-    if ((fd = VfsOpen(AT_FDCWD, prog, O_RDONLY, 0)) == -1 ||
+    LogInfo(__FILE__, __LINE__, "LoadProgram: attempting to open '%s'", prog);
+    fd = VfsOpen(AT_FDCWD, prog, O_RDONLY, 0);
+    LogInfo(__FILE__, __LINE__, "LoadProgram: VfsOpen returned fd=%d (errno=%d)", fd, errno);
+    if (fd == -1 ||
         VfsFstat(fd, &st) == -1 || CheckExecutableFile(prog, &st) == -1 ||
         (map = Mmap(0, (mapsize = st.st_size), PROT_READ | PROT_WRITE,
                     MAP_PRIVATE, fd, 0, "loader")) == MAP_FAILED) {
