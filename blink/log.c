@@ -127,7 +127,7 @@ static void OpenLog(void) {
 
 static void Log(const char *file, int line, const char *fmt, va_list va,
                 int level) {
-  // if (level == 1) return;  // portator: enable INFO logging
+  if (level == 1) return;
   char b[4096];
   int err, n = 0;
   err = errno;

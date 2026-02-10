@@ -2237,33 +2237,10 @@ void Actor(struct Machine *mm) {
 #else
   struct Machine *m;
 #endif
-  /* portator debug: trace guest IP to find infinite loops */
-  static unsigned long long icount;
   for (g_machine = mm, m = mm;;) {
 #ifndef __CYGWIN__
     STATISTIC(++interps);
 #endif
-    ++icount;
-    /* Log every syscall + periodic check + null address detection */
-    {
-      u8 *p = GetAddress(m, m->ip);
-      if (!p) {
-        LogInfo(__FILE__, __LINE__, "BADADDR ip=%#llx icount=%llu",
-                (unsigned long long)m->ip, icount);
-      } else if (p[0] == 0x0f && p[1] == 0x05) {
-        LogInfo(__FILE__, __LINE__, "SYSCALL ip=%#llx rax=%#llx rdi=%#llx rsi=%#llx rdx=%#llx icount=%llu",
-                (unsigned long long)m->ip,
-                (unsigned long long)Get64(m->ax),
-                (unsigned long long)Get64(m->di),
-                (unsigned long long)Get64(m->si),
-                (unsigned long long)Get64(m->dx),
-                icount);
-      }
-      if ((icount % 1000000) == 0) {
-        LogInfo(__FILE__, __LINE__, "ALIVE ip=%#llx icount=%llu",
-                (unsigned long long)m->ip, icount);
-      }
-    }
     if (!atomic_load_explicit(&m->attention, memory_order_acquire)) {
       ExecuteInstruction(m);
     } else {

@@ -23,7 +23,7 @@
 #define LOG_SPX 0  // speculative execution logging
 #define LOG_CPU 0  // produce txt file of registers
 #define LOG_COD 0  // produce asm file of jit codes
-#define LOG_VFS 1  // log from emulated filesystems
+#define LOG_VFS 0  // log from emulated filesystems
 
 #if LOG_ENABLED
 #define ERRF(...) LogErr(__FILE__, __LINE__, __VA_ARGS__)
