@@ -208,10 +208,14 @@ static i64 LoadElfLoadSegment(struct Machine *m, const char *path, void *image,
       // map the bulk of .text directly into memory without copying.
       ELF_LOGF("load %" PRIx64 "-%" PRIx64 " from %" PRIx64 "-%" PRIx64, start,
                start + bulk, offset, offset + bulk);
-      if (ReserveVirtual(s, start, bulk, key, fd, offset, 0, 0) == -1) {
+      // portator: use anonymous mapping + copy instead of fd-based lazy
+      // mapping, because Cosmopolitan /zip/ fds don't support mmap at
+      // non-zero offsets correctly.
+      if (ReserveVirtual(s, start, bulk, key, -1, 0, 0, 0) == -1) {
         ERRF("failed to map elf program header file data");
         exit(EXIT_FAILURE_EXEC_FAILED);
       }
+      LoaderCopy(m, start, MIN(filesz, bulk), image, offset, prot);
       if ((amt = bulk - filesz)) {
         ELF_LOGF("note: next copy is actually bzero() kludge");
         unassert(blank = calloc(1, amt));
