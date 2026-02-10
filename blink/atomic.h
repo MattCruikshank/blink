@@ -1,5 +1,6 @@
 #ifndef BLINK_ATOMIC_H_
 #define BLINK_ATOMIC_H_
+#pragma GCC diagnostic ignored "-Wcast-align"
 #include "blink/builtin.h"
 #include "blink/thread.h"
 #if defined(HAVE_FORK) || defined(HAVE_THREADS)
